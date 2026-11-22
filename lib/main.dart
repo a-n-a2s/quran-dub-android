@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'data/quran_database.dart';
+
 void main() {
   runApp(const QuranDubApp());
 }
@@ -23,26 +25,104 @@ class QuranDubApp extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+/// شاشة ترحيبية بسيطة. مهمتها هلأ إنها تتحقق إنه قاعدة بيانات القرآن
+/// والتفسير اتبنت واتعبّت بنجاح من ملف الأصول المضغوط (seed مرة واحدة
+/// عند أول فتح)، وتعرض عدد الآيات كتأكيد مرئي سريع لحالة البيانات.
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late final Future<_SeedStatus> _seedFuture = _checkSeedStatus();
+
+  Future<_SeedStatus> _checkSeedStatus() async {
+    final db = await QuranDatabase.instance.database;
+    final surahs = await QuranDatabase.instance.allSurahs();
+    final firstAyah = await QuranDatabase.instance.ayahAt(1, 1);
+    final ayahCountRow = await db.rawQuery('SELECT COUNT(*) AS c FROM ayahs');
+    final ayahCount = ayahCountRow.first['c'] as int;
+    return _SeedStatus(
+      surahCount: surahs.length,
+      ayahCount: ayahCount,
+      sampleAyah: firstAyah?.textUthmani ?? '',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('تلاوة وتفسير')),
-      body: const Center(
+      body: Center(
         child: Padding(
-          padding: EdgeInsets.all(24.0),
-          child: Text(
-            'مرحباً بك 👋\n'
-            'هاي بداية مشروع تطبيق "تلاوة وتفسير".\n'
-            'لسا الشغل عالهيكلة الأساسية، قاعدة بيانات القرآن والتفسير،\n'
-            'ومطابقة الصوت جاية بالأيام الجاية.',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16),
+          padding: const EdgeInsets.all(24.0),
+          child: FutureBuilder<_SeedStatus>(
+            future: _seedFuture,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Text(
+                  'حصل خطأ بتحميل قاعدة بيانات القرآن:\n${snapshot.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red),
+                );
+              }
+              if (!snapshot.hasData) {
+                return const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('جاري تجهيز قاعدة بيانات القرآن والتفسير...'),
+                  ],
+                );
+              }
+              final status = snapshot.data!;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'مرحباً بك 👋',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'قاعدة بيانات القرآن والتفسير جاهزة محلياً:\n'
+                    '${status.surahCount} سورة، ${status.ayahCount} آية.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    status.sampleAyah,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 22),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'مطابقة الصوت مع الآيات جايّة بالمراحل الجاية.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 14, color: Colors.black54),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),
     );
   }
+}
+
+class _SeedStatus {
+  final int surahCount;
+  final int ayahCount;
+  final String sampleAyah;
+
+  const _SeedStatus({
+    required this.surahCount,
+    required this.ayahCount,
+    required this.sampleAyah,
+  });
 }
