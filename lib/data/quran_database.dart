@@ -143,7 +143,7 @@ class QuranDatabase {
       byteData.offsetInBytes,
       byteData.lengthInBytes,
     );
-    final decompressedBytes = const GZipCodec().decode(compressedBytes);
+    final decompressedBytes = GZipCodec().decode(compressedBytes);
     final jsonString = utf8.decode(decompressedBytes);
     return json.decode(jsonString) as Map<String, dynamic>;
   }
