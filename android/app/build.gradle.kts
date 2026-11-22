@@ -14,10 +14,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8.toString()
-    }
-
     defaultConfig {
         // اسم الحزمة المؤقت - رح يتغيّر لما نحدد الاسم والمعرف النهائي للتطبيق
         applicationId = "com.tijara.quran_dub"
@@ -33,6 +29,10 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+}
+
+kotlin {
+    jvmToolchain(17)
 }
 
 flutter {
