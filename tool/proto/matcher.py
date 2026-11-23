@@ -57,28 +57,74 @@ class QuranIndex:
         return bisect.bisect_right(self.starts, pos) - 1
 
 
-def semi_global(q, w):
-    """Edit distance of q vs best substring of w. Returns (dist, start, end)."""
+# تكلفة affine gap لحروف القرآن اللي أسقطها التعرف على الصوت (يوم 5). نفس
+# القيم بـ lib/matching/quran_matcher.dart._gapOpen/._gapExtend — دقّقناها
+# بسيناريو فاتحة العفاسي (مالك يوم الدين أسقطها التعرف) وبكل اختبارات
+# test/matching بدون تراجع (شوف tool/proto/validate_affine.py).
+GAP_OPEN = 1.5
+GAP_EXTEND = 0.35
+
+
+def semi_global(q, w, gap_open=GAP_OPEN, gap_extend=GAP_EXTEND):
+    """Semi-global alignment cost of q vs best substring of w (free start/end
+    on w's side). Returns (cost, start, end).
+
+    حالتين لكل خلية: M (تطابق/استبدال، أو "حذف" حرف استعلام بتكلفة 1 موحّدة)
+    و Dh (فجوة: حرف من w ناقص من q، بتكلفة affine عشان الفجوات الطويلة —
+    آية كاملة أسقطها التعرف — ما توقّف المحاذاة قبلها). مطابق لـ
+    `QuranMatcher._semiGlobal` بـ lib/matching/quran_matcher.dart.
+    """
     m, n = len(q), len(w)
-    prev = [0] * (n + 1)
-    pstart = list(range(n + 1))  # start index in w of best alignment ending here
+    INF = float('inf')
+    prevM = [0.0] * (n + 1)          # بداية حرة: صفر لأي عمود
+    prevMStart = list(range(n + 1))
+    prevDh = [INF] * (n + 1)
+    prevDhStart = [0] * (n + 1)
+
     for i in range(1, m + 1):
-        cur = [i] + [0] * n
-        cstart = [0] * (n + 1)
+        curM = [0.0] * (n + 1)
+        curMStart = [0] * (n + 1)
+        curDh = [INF] * (n + 1)
+        curDhStart = [0] * (n + 1)
+        curM[0] = float(i)
+        curMStart[0] = 0
         qi = q[i - 1]
         for j in range(1, n + 1):
-            sub = prev[j - 1] + (0 if qi == w[j - 1] else 1)
-            dele = prev[j] + 1      # skip q char
-            ins = cur[j - 1] + 1    # skip w char
-            if sub <= dele and sub <= ins:
-                cur[j], cstart[j] = sub, pstart[j - 1]
-            elif dele <= ins:
-                cur[j], cstart[j] = dele, pstart[j]
+            subCost = 0.0 if qi == w[j - 1] else 1.0
+            if prevM[j - 1] <= prevDh[j - 1]:
+                subBase, subStart = prevM[j - 1], prevMStart[j - 1]
             else:
-                cur[j], cstart[j] = ins, cstart[j - 1]
-        prev, pstart = cur, cstart
-    best_j = min(range(n + 1), key=lambda j: (prev[j], -j))
-    return prev[best_j], pstart[best_j], best_j
+                subBase, subStart = prevDh[j - 1], prevDhStart[j - 1]
+            subVal = subBase + subCost
+
+            if prevM[j] <= prevDh[j]:
+                delBase, delStart = prevM[j], prevMStart[j]
+            else:
+                delBase, delStart = prevDh[j], prevDhStart[j]
+            delVal = delBase + 1.0
+
+            if subVal <= delVal:
+                curM[j], curMStart[j] = subVal, subStart
+            else:
+                curM[j], curMStart[j] = delVal, delStart
+
+            openVal = curM[j - 1] + gap_open
+            extendVal = curDh[j - 1] + gap_extend
+            if openVal <= extendVal:
+                curDh[j], curDhStart[j] = openVal, curMStart[j - 1]
+            else:
+                curDh[j], curDhStart[j] = extendVal, curDhStart[j - 1]
+        prevM, prevMStart, prevDh, prevDhStart = curM, curMStart, curDh, curDhStart
+
+    best_j, best_cost, best_start = 0, INF, 0
+    for j in range(n + 1):
+        if prevM[j] <= prevDh[j]:
+            c, s = prevM[j], prevMStart[j]
+        else:
+            c, s = prevDh[j], prevDhStart[j]
+        if c <= best_cost:
+            best_cost, best_j, best_start = c, j, s
+    return best_cost, best_start, best_j
 
 
 def match(idx, text, top_n=8, prev_end=None, ctx_bonus=0.08):

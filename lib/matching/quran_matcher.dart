@@ -161,6 +161,18 @@ class QuranMatcher {
   static const double _contextBonus = 0.08;
   static const double _surahStartBonus = 0.05;
 
+  /// تكلفة "فجوة" (حروف من القرآن مش موجودة بالاستعلام، يعني التعرف على
+  /// الصوت أسقطها) بنظام affine gap: فتح الفجوة [_gapOpen] + تمديدها
+  /// [_gapExtend] لكل حرف زيادة، بدل حرف بحرف بتكلفة 1 (uniform). هيك فجوة
+  /// طويلة (آية كاملة ضايعة من التعرف) بتكلّف أقل بكثير من مجموع حروفها،
+  /// فالمحاذاة بتكمّل بعدها بدل ما تتوقف قبلها. (يوم 5، بعد ملاحظة فاتحة
+  /// العفاسي: "مالك يوم الدين" أسقطها التعرف، والمحاذاة القديمة فضّلت
+  /// تتوقف عند 1:5 بدل ما تكمّل لـ 1:6 لأنه عبور الفجوة كان أغلى من
+  /// تجاهل باقي المقطع). القيم دُقّقت بـ tool/proto/matcher.py على نفس
+  /// السيناريو وعلى كل اختبارات test/matching بدون أي تراجع.
+  static const double _gapOpen = 1.5;
+  static const double _gapExtend = 0.35;
+
   /// حد أدنى لطول الاستعلام (حروف مفتاح) عشان نحاول نطابق.
   static const int minQueryLetters = 6;
 
@@ -515,85 +527,193 @@ class QuranMatcher {
     return out;
   }
 
-  /// أقل مسافة تعديل بين q وأي جزء من corpus[lo:hi]. بيرجّع
-  /// (المسافة، البداية، النهاية) كمواقع مطلقة بالنص المتصل.
-  (int, int, int) _semiGlobal(Uint8List q, int lo, int hi) {
+  /// أقل "تكلفة" محاذاة شبه-شاملة (بداية ونهاية حرة على طرف القرآن) بين q
+  /// وأي جزء من corpus[lo:hi]. بيرجّع (التكلفة، البداية، النهاية) كمواقع
+  /// مطلقة بالنص المتصل.
+  ///
+  /// حالتين لكل خلية: M (تطابق/استبدال، أو "حذف" حرف استعلام بتكلفة 1
+  /// موحّدة — حرف زيادة بالتعرف، نادراً بيطوّل) و Dh (فجوة: حرف من القرآن
+  /// ناقص بالاستعلام، بتكلفة affine عشان الفجوات الطويلة ما توقّف المحاذاة
+  /// قبلها). نفس الفكرة بـ tool/proto/matcher.py (`semi_global`).
+  (double, int, int) _semiGlobal(Uint8List q, int lo, int hi) {
     final n = hi - lo;
-    var prev = Int32List(n + 1);
-    var prevStart = Int32List(n + 1);
+    final m = q.length;
+
+    var prevM = Float64List(n + 1); // مبدئياً كل القيم 0 (بداية حرة)
+    var prevMStart = Int32List(n + 1);
     for (var j = 0; j <= n; j++) {
-      prevStart[j] = j;
+      prevMStart[j] = j;
     }
-    var cur = Int32List(n + 1);
-    var curStart = Int32List(n + 1);
-    for (var i = 1; i <= q.length; i++) {
-      cur[0] = i;
-      curStart[0] = 0;
+    var prevDh = Float64List(n + 1)..fillRange(0, n + 1, double.infinity);
+    var prevDhStart = Int32List(n + 1);
+
+    var curM = Float64List(n + 1);
+    var curMStart = Int32List(n + 1);
+    var curDh = Float64List(n + 1);
+    var curDhStart = Int32List(n + 1);
+
+    for (var i = 1; i <= m; i++) {
+      curM[0] = i.toDouble();
+      curMStart[0] = 0;
+      curDh[0] = double.infinity;
+      curDhStart[0] = 0;
       final qi = q[i - 1];
       for (var j = 1; j <= n; j++) {
-        final sub = prev[j - 1] + (qi == _codes[lo + j - 1] ? 0 : 1);
-        final del = prev[j] + 1;
-        final ins = cur[j - 1] + 1;
-        if (sub <= del && sub <= ins) {
-          cur[j] = sub;
-          curStart[j] = prevStart[j - 1];
-        } else if (del <= ins) {
-          cur[j] = del;
-          curStart[j] = prevStart[j];
+        final subCost = qi == _codes[lo + j - 1] ? 0.0 : 1.0;
+        double subBase;
+        int subStart;
+        if (prevM[j - 1] <= prevDh[j - 1]) {
+          subBase = prevM[j - 1];
+          subStart = prevMStart[j - 1];
         } else {
-          cur[j] = ins;
-          curStart[j] = curStart[j - 1];
+          subBase = prevDh[j - 1];
+          subStart = prevDhStart[j - 1];
+        }
+        final subVal = subBase + subCost;
+
+        double delBase;
+        int delStart;
+        if (prevM[j] <= prevDh[j]) {
+          delBase = prevM[j];
+          delStart = prevMStart[j];
+        } else {
+          delBase = prevDh[j];
+          delStart = prevDhStart[j];
+        }
+        final delVal = delBase + 1.0;
+
+        if (subVal <= delVal) {
+          curM[j] = subVal;
+          curMStart[j] = subStart;
+        } else {
+          curM[j] = delVal;
+          curMStart[j] = delStart;
+        }
+
+        final openVal = curM[j - 1] + _gapOpen;
+        final extendVal = curDh[j - 1] + _gapExtend;
+        if (openVal <= extendVal) {
+          curDh[j] = openVal;
+          curDhStart[j] = curMStart[j - 1];
+        } else {
+          curDh[j] = extendVal;
+          curDhStart[j] = curDhStart[j - 1];
         }
       }
-      final t = prev;
-      prev = cur;
-      cur = t;
-      final ts = prevStart;
-      prevStart = curStart;
-      curStart = ts;
+      final tm = prevM;
+      prevM = curM;
+      curM = tm;
+      final tms = prevMStart;
+      prevMStart = curMStart;
+      curMStart = tms;
+      final td = prevDh;
+      prevDh = curDh;
+      curDh = td;
+      final tds = prevDhStart;
+      prevDhStart = curDhStart;
+      curDhStart = tds;
     }
+
     var bestJ = 0;
+    var bestCost = prevM[0] <= prevDh[0] ? prevM[0] : prevDh[0];
+    var bestStart = prevM[0] <= prevDh[0] ? prevMStart[0] : prevDhStart[0];
     for (var j = 1; j <= n; j++) {
-      if (prev[j] <= prev[bestJ]) bestJ = j; // عند التعادل: الأطول
+      final c = prevM[j] <= prevDh[j] ? prevM[j] : prevDh[j];
+      if (c <= bestCost) {
+        // عند التعادل: الأطول
+        bestCost = c;
+        bestJ = j;
+        bestStart = prevM[j] <= prevDh[j] ? prevMStart[j] : prevDhStart[j];
+      }
     }
-    return (prev[bestJ], lo + prevStart[bestJ], lo + bestJ);
+    return (bestCost, lo + bestStart, lo + bestJ);
   }
 
   /// محاذاة كاملة (مع traceback) بين q و corpus[start:end) وتقسيمها على
   /// الآيات. [queryOffset] = طول المقدمات المحذوفة من بداية الاستعلام.
+  ///
+  /// [start, end) ثابتين (جايين من [_semiGlobal]: أفضل بداية ونهاية)، فما
+  /// في بداية/نهاية حرة هون — لازم كل حروف q وكل حروف النافذة ينحسبوا
+  /// بمحاذاة واحدة كاملة، بنفس تكلفة affine gap تبع [_semiGlobal] (حالتين:
+  /// M و Dh)، عشان الـ traceback (وتوقيت كل جزء من [qAt]) يطابق الاختيار
+  /// اللي صار فوق بالضبط.
   List<AyahSpan> _spans(Uint8List q, int start, int end, int queryOffset) {
     final m = q.length, n = end - start;
     if (n <= 0) return [];
     final w = n + 1;
-    final d = Uint16List((m + 1) * w);
+    final dm = Float32List((m + 1) * w);
+    final dh = Float32List((m + 1) * w);
     for (var j = 0; j <= n; j++) {
-      d[j] = j;
+      dh[j] = double.infinity;
+    }
+    dm[0] = 0;
+    for (var j = 1; j <= n; j++) {
+      dm[j] = double.infinity;
+    }
+    for (var j = 1; j <= n; j++) {
+      final openVal = dm[j - 1] + _gapOpen;
+      final extendVal = dh[j - 1] + _gapExtend;
+      dh[j] = math.min(openVal, extendVal);
     }
     for (var i = 1; i <= m; i++) {
-      d[i * w] = i;
+      dh[i * w] = double.infinity;
+      dm[i * w] = i.toDouble(); // سلسلة "حذف" موحّدة بالعمود صفر
       final qi = q[i - 1];
       for (var j = 1; j <= n; j++) {
-        final sub = d[(i - 1) * w + j - 1] + (qi == _codes[start + j - 1] ? 0 : 1);
-        final del = d[(i - 1) * w + j] + 1;
-        final ins = d[i * w + j - 1] + 1;
-        d[i * w + j] = math.min(sub, math.min(del, ins));
+        final subCost = qi == _codes[start + j - 1] ? 0.0 : 1.0;
+        final diagM = dm[(i - 1) * w + (j - 1)];
+        final diagDh = dh[(i - 1) * w + (j - 1)];
+        final subVal = (diagM <= diagDh ? diagM : diagDh) + subCost;
+        final upM = dm[(i - 1) * w + j];
+        final upDh = dh[(i - 1) * w + j];
+        final delVal = (upM <= upDh ? upM : upDh) + 1.0;
+        dm[i * w + j] = math.min(subVal, delVal);
+        final openVal = dm[i * w + j - 1] + _gapOpen;
+        final extendVal = dh[i * w + j - 1] + _gapExtend;
+        dh[i * w + j] = math.min(openVal, extendVal);
       }
     }
+
     // qAt[j] = رقم حرف الاستعلام المقابل لحرف القرآن start+j.
+    // matched[j] = حرف القرآن start+j انطابق فعلاً بحرف استعلام حقيقي
+    // (مش بس "عبرناه" بفجوة Dh — آية كاملة أسقطها التعرف بنص المقطع ما
+    // بتصير "مغطّاة" وهمياً، يوم 5).
     final qAt = Int32List(n);
+    final matched = Uint8List(n);
     var i = m, j = n;
+    var inM = dm[i * w + j] <= dh[i * w + j];
     while (j > 0) {
-      final here = d[i * w + j];
-      if (i > 0 &&
-          here == d[(i - 1) * w + j - 1] + (q[i - 1] == _codes[start + j - 1] ? 0 : 1)) {
-        qAt[j - 1] = i - 1;
-        i--;
-        j--;
-      } else if (i > 0 && here == d[(i - 1) * w + j] + 1) {
-        i--;
+      if (inM) {
+        final here = dm[i * w + j];
+        final subCost = q[i - 1] == _codes[start + j - 1] ? 0.0 : 1.0;
+        final diagM = dm[(i - 1) * w + (j - 1)];
+        final diagDh = dh[(i - 1) * w + (j - 1)];
+        final subVal = (diagM <= diagDh ? diagM : diagDh) + subCost;
+        if ((subVal - here).abs() < 1e-3) {
+          qAt[j - 1] = i - 1;
+          matched[j - 1] = 1;
+          final fromM = diagM <= diagDh;
+          i--;
+          j--;
+          inM = fromM;
+        } else {
+          // "حذف": حرف استعلام زيادة بدون حرف قرآن مقابل — i بس بتنزل.
+          i--;
+          final upM = dm[i * w + j];
+          final upDh = dh[i * w + j];
+          inM = upM <= upDh;
+        }
       } else {
+        // بفجوة Dh: حرف قرآن ناقص من الاستعلام (أسقطه التعرف). ما
+        // بنعلّمه matched، بس لازم قيمة qAt تقريبية (للتوقيت) بدون ما
+        // تأثر على حساب التغطية.
         qAt[j - 1] = i > 0 ? i - 1 : 0;
+        final leftM = dm[i * w + (j - 1)];
+        final leftDh = dh[i * w + (j - 1)];
+        final openVal = leftM + _gapOpen;
+        final extendVal = leftDh + _gapExtend;
         j--;
+        inM = openVal <= extendVal;
       }
     }
 
@@ -604,10 +724,14 @@ class QuranMatcher {
       final s = math.max(aStart, start), e = math.min(aEnd, end);
       if (e > s) {
         final len = aEnd - aStart;
+        var matchedCount = 0;
+        for (var p = s; p < e; p++) {
+          matchedCount += matched[p - start];
+        }
         spans.add(AyahSpan(
           _surah[ai],
           _ayah[ai],
-          len == 0 ? 1 : (e - s) / len,
+          len == 0 ? 1 : matchedCount / len,
           queryOffset + qAt[s - start],
           queryOffset + qAt[e - 1 - start] + 1,
         ));
