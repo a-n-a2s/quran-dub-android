@@ -53,7 +53,7 @@ jobs:
             echo
             aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
             echo '```'
-            "$aapt2" dump badging "$apk" | grep -E "^package:|^application-label|^uses-permission|^native-code|^sdkVersion" || true
+            "$aapt2" dump badging "$apk" | grep -E "^package:|^application-label:|^uses-permission|^native-code|^sdkVersion" || true
             echo '```'
             echo
             echo "| ABI | native libs (compressed in APK) |"
