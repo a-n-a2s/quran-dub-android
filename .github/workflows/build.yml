@@ -39,8 +39,9 @@ jobs:
       - name: Tests (QuranMatcher + WAV/ASR helpers)
         run: flutter test test/matching test/asr
 
+      # بس معالجات الجوالات الحقيقية (arm64 + arm 32-bit)، بدون x86_64 (محاكي).
       - name: Build debug APK
-        run: flutter build apk --debug
+        run: flutter build apk --debug --target-platform android-arm,android-arm64
 
       - name: APK size report (debug)
         run: |
