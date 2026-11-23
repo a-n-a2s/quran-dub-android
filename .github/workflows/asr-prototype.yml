@@ -1,0 +1,109 @@
+name: نموذج أولي - تعرف على التلاوة ومطابقتها
+
+# بيشغّل محرك التعرف (sherpa-onnx + quran-asr-tiny) على تلاوات حقيقية لعدة
+# قرّاء، وبيطابق الناتج مع القرآن بـ QuranMatcher (نفس كود Dart تبع
+# التطبيق)، وبيطبع السورة/الآية/الثقة/التوقيت. كمان بينشر ملفات النموذج
+# كـ GitHub Release (asr-model-v1) عشان التطبيق ينزّلها مرة وحدة وقت أول
+# استخدام بدل ما تنضم لحجم APK.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ "main" ]
+    paths:
+      - "lib/matching/**"
+      - "tool/**"
+      - ".github/workflows/asr-prototype.yml"
+
+permissions:
+  contents: write
+
+env:
+  MODEL_REPO: Abdou/quran-asr-tiny
+  MODEL_TAG: asr-model-v1
+
+jobs:
+  asr:
+    name: ASR + matching prototype
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install sherpa-onnx (Python)
+        run: pip install --quiet sherpa-onnx soundfile numpy huggingface_hub
+
+      - name: Download ASR model (quran-asr-tiny, int8) + Silero VAD
+        run: |
+          mkdir -p build/asr/model
+          python - <<'EOF'
+          from huggingface_hub import hf_hub_download
+          import os, shutil
+          for f in ["model.int8.onnx", "tokens.txt", "README.md"]:
+              p = hf_hub_download(os.environ["MODEL_REPO"], f)
+              shutil.copy(p, "build/asr/model/" + f)
+          EOF
+          curl -fsSL --retry 3 -o build/asr/model/silero_vad.onnx \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+          ls -la build/asr/model
+          echo "--- tokens.txt ---"; cat build/asr/model/tokens.txt
+          (cd build/asr/model && sha256sum model.int8.onnx tokens.txt silero_vad.onnx > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Download test recitations (everyayah.com) → 16kHz WAV
+        run: bash tool/asr_prototype/prepare_clips.sh build/asr/clips
+
+      - name: Run ASR (whole clip + VAD segments)
+        run: |
+          python tool/asr_prototype/run_asr.py build/asr/model \
+            build/asr/model/silero_vad.onnx build/asr/clips/clips.json \
+            build/asr/transcripts.json
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Match transcripts with the Quran (Dart QuranMatcher)
+        run: |
+          dart run tool/match_transcripts.dart build/asr/transcripts.json build/asr/summary.md
+          cat build/asr/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload transcripts & results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asr-prototype-results-${{ github.run_number }}
+          path: |
+            build/asr/transcripts.json
+            build/asr/summary.md
+            build/asr/clips/clips.json
+          retention-days: 30
+
+      - name: Publish model files as GitHub Release (once)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$MODEL_TAG" >/dev/null 2>&1; then
+            echo "Release $MODEL_TAG already exists, skipping."
+            exit 0
+          fi
+          cp build/asr/model/README.md build/asr/model/MODEL_README.md
+          cp build/asr/clips/fatiha_alafasy.wav build/asr/model/test_fatiha_alafasy_16k.wav
+          gh release create "$MODEL_TAG" \
+            --title "ASR model v1 (quran-asr-tiny int8 + Silero VAD)" \
+            --notes "ملفات محرك التعرف على التلاوة اللي بينزّلها التطبيق مرة وحدة وقت أول استخدام (lazy) بدل تضمينها بـ APK.
+          - model.int8.onnx + tokens.txt: https://huggingface.co/${MODEL_REPO} (MIT)
+          - silero_vad.onnx: https://github.com/snakers4/silero-vad (MIT) via k2-fsa/sherpa-onnx
+          - test_fatiha_alafasy_16k.wav: مقطع اختبار للتطوير فقط (everyayah.com)، مش للاستخدام بالتطبيق.
+          SHA256SUMS للتحقق." \
+            build/asr/model/model.int8.onnx \
+            build/asr/model/tokens.txt \
+            build/asr/model/silero_vad.onnx \
+            build/asr/model/SHA256SUMS \
+            build/asr/model/MODEL_README.md \
+            build/asr/model/test_fatiha_alafasy_16k.wav

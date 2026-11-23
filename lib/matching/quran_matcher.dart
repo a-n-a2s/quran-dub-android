@@ -1,0 +1,554 @@
+import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'arabic_normalizer.dart';
+
+/// آية بالشكل اللي بيحتاجه الـ matcher (مستقل عن sqflite وعن Flutter، عشان
+/// نقدر نشغّله بـ `dart test` وبأدوات سطر الأوامر وبـ isolate).
+class MatchableAyah {
+  final int surah;
+  final int ayah;
+  final String text; // text_uthmani (أو أي نص للآية، بيتطبّع داخلياً)
+  const MatchableAyah(this.surah, this.ayah, this.text);
+}
+
+/// نوع المقدمة اللي بيقرأها القارئ قبل الآيات (مش جزء من آية مرقّمة،
+/// إلا البسملة بالفاتحة).
+enum PreambleType { istiadha, basmala }
+
+class Preamble {
+  final PreambleType type;
+  final int queryStart; // بمفتاح الاستعلام المطبّع
+  final int queryEnd;
+  const Preamble(this.type, this.queryStart, this.queryEnd);
+  @override
+  String toString() => '${type.name}[$queryStart,$queryEnd)';
+}
+
+/// جزء الآية اللي غطّاه المقطع المسموع.
+class AyahSpan {
+  final int surah;
+  final int ayah;
+
+  /// نسبة حروف الآية اللي انسمعت بالمقطع (0..1). أقل من 1 يعني المقطع
+  /// بلّش أو خلص بنص الآية.
+  final double coverage;
+
+  /// موقع الآية بمفتاح الاستعلام المطبّع [queryStart, queryEnd). مع
+  /// `NormalizedText.sourceIndex` بنرجع منه لتوقيتات محرك التعرف.
+  final int queryStart;
+  final int queryEnd;
+
+  const AyahSpan(this.surah, this.ayah, this.coverage, this.queryStart,
+      this.queryEnd);
+
+  @override
+  String toString() =>
+      '$surah:$ayah (${(coverage * 100).toStringAsFixed(0)}%, q[$queryStart,$queryEnd))';
+}
+
+class AlternativeMatch {
+  final int surah;
+  final int ayah;
+  final double similarity;
+  const AlternativeMatch(this.surah, this.ayah, this.similarity);
+  @override
+  String toString() => '$surah:$ayah@${similarity.toStringAsFixed(2)}';
+}
+
+class QuranMatch {
+  /// 1 - (مسافة التعديل / طول الاستعلام). 1.0 = تطابق حرفي كامل.
+  final double similarity;
+
+  /// ثقة نهائية (0..1) بتجمع التشابه + طول المقطع + تفرّد الموقع/السياق.
+  final double confidence;
+
+  /// لو في موقع ثاني بالقرآن قريب جداً بالتشابه وما حسمه السياق.
+  final bool isAmbiguous;
+
+  /// لو الموقع المختار بيكمّل مباشرة من المقطع السابق (previousEnd).
+  final bool continuesContext;
+
+  /// موقع المطابقة بنص القرآن المتصل (للتسلسل: مرّر corpusEnd كـ
+  /// previousEnd للمقطع اللي بعده).
+  final int corpusStart;
+  final int corpusEnd;
+
+  final List<AyahSpan> ayahs;
+  final List<Preamble> preambles;
+  final List<AlternativeMatch> alternatives;
+  final NormalizedText query;
+
+  const QuranMatch({
+    required this.similarity,
+    required this.confidence,
+    required this.isAmbiguous,
+    required this.continuesContext,
+    required this.corpusStart,
+    required this.corpusEnd,
+    required this.ayahs,
+    required this.preambles,
+    required this.alternatives,
+    required this.query,
+  });
+
+  AyahSpan? get first => ayahs.isEmpty ? null : ayahs.first;
+  AyahSpan? get last => ayahs.isEmpty ? null : ayahs.last;
+
+  @override
+  String toString() {
+    final where = ayahs.isEmpty
+        ? '-'
+        : (ayahs.length == 1
+            ? '${ayahs.first.surah}:${ayahs.first.ayah}'
+            : '${ayahs.first.surah}:${ayahs.first.ayah} → ${ayahs.last.surah}:${ayahs.last.ayah}');
+    return 'QuranMatch($where, confidence=${confidence.toStringAsFixed(2)}, '
+        'similarity=${similarity.toStringAsFixed(2)}, ambiguous=$isAmbiguous, '
+        'context=$continuesContext, preambles=$preambles, ayahs=$ayahs, '
+        'alternatives=$alternatives)';
+  }
+}
+
+/// مطابقة ضبابية (fuzzy) بين نص خارج من محرك التعرف على الصوت وبين نص
+/// القرآن الكامل.
+///
+/// الخوارزمية (seed-and-verify، زي فكرة BLAST):
+/// 1. **تطبيع**: الطرفين بيتحولوا لمفتاح رسم ([ArabicNormalizer]).
+/// 2. **فهرسة**: كل القرآن (6236 آية) بينحط بنص واحد متصل (~270 ألف حرف)
+///    مع فهرس n-gram (4 حروف) → مواقعها.
+/// 3. **ترشيح**: كل 4-gram بالاستعلام بيصوّت لـ "قُطر" (موقع البداية
+///    المتوقع = موقع الـ gram بالقرآن - موقعه بالاستعلام)، بوزن أقل للـ
+///    grams الشائعة. بناخد أعلى المرشحين.
+/// 4. **تحقق**: لكل مرشح، محاذاة شبه-شاملة (semi-global edit distance)
+///    بين الاستعلام ونافذة من القرآن حوالين المرشح، بتعطي أفضل بداية
+///    ونهاية بالضبط رغم الحذف/الإضافة/الاستبدال.
+/// 5. **سياق**: لو مررنا نهاية المقطع السابق، الموقع اللي بيكمّل منه
+///    بياخد أولوية (بيحسم الآيات المكررة زي "فبأي آلاء ربكما تكذبان").
+/// 6. **تفصيل**: traceback للمحاذاة بيقسّم المقطع على الآيات، مع نسبة
+///    تغطية كل آية وموقعها بالاستعلام (للتوقيت لاحقاً).
+class QuranMatcher {
+  static const int gramSize = 4;
+  static const int _bucket = 8;
+  static const int _maxGramFrequency = 3000;
+  static const double _contextBonus = 0.08;
+  static const double _surahStartBonus = 0.05;
+
+  /// حد أدنى لطول الاستعلام (حروف مفتاح) عشان نحاول نطابق.
+  static const int minQueryLetters = 6;
+
+  /// حد أعلى (~دقيقتين تلاوة). المقاطع الأطول لازم تتقسّم (VAD) قبل.
+  static const int maxQueryLetters = 1200;
+
+  final Int32List _surah;
+  final Int32List _ayah;
+  final Int32List _starts; // بداية كل آية بالنص المتصل (+ عنصر أخير = الطول)
+  final Uint8List _codes; // النص المتصل كأرقام حروف 0..26
+  final Map<int, Int32List> _grams;
+  final Uint8List _basmala;
+  final Uint8List _istiadha;
+  final int _fatihaFirstIndex; // فهرس 1:1 لو موجود
+  final Set<int> _surahStarts; // مواقع بداية كل سورة (+ بداية 1:2)
+
+  QuranMatcher._(this._surah, this._ayah, this._starts, this._codes,
+      this._grams, this._basmala, this._istiadha, this._fatihaFirstIndex,
+      this._surahStarts);
+
+  int get corpusLength => _codes.length;
+  int get ayahCount => _surah.length;
+
+  factory QuranMatcher.build(List<MatchableAyah> ayahs) {
+    final n = ayahs.length;
+    final surah = Int32List(n);
+    final ayah = Int32List(n);
+    final starts = Int32List(n + 1);
+    final codes = <int>[];
+    var fatiha = -1;
+    for (var i = 0; i < n; i++) {
+      final a = ayahs[i];
+      surah[i] = a.surah;
+      ayah[i] = a.ayah;
+      if (a.surah == 1 && a.ayah == 1) fatiha = i;
+      starts[i] = codes.length;
+      codes.addAll(_toCodes(ArabicNormalizer.key(a.text)));
+    }
+    starts[n] = codes.length;
+    final c = Uint8List.fromList(codes);
+
+    // فهرس 4-grams: أول عدّ، بعدين تعبئة (أسرع وأوفر من List.add).
+    final counts = <int, int>{};
+    for (var i = 0; i + gramSize <= c.length; i++) {
+      final h = _hash(c, i);
+      counts[h] = (counts[h] ?? 0) + 1;
+    }
+    final grams = <int, Int32List>{};
+    final fill = <int, int>{};
+    counts.forEach((h, cnt) {
+      grams[h] = Int32List(cnt);
+      fill[h] = 0;
+    });
+    for (var i = 0; i + gramSize <= c.length; i++) {
+      final h = _hash(c, i);
+      final f = fill[h]!;
+      grams[h]![f] = i;
+      fill[h] = f + 1;
+    }
+
+    final surahStarts = <int>{
+      for (var i = 0; i < n; i++)
+        if (ayah[i] == 1 || (surah[i] == 1 && ayah[i] == 2)) starts[i],
+    };
+
+    return QuranMatcher._(
+      surah,
+      ayah,
+      starts,
+      c,
+      grams,
+      _toCodes(ArabicNormalizer.key('بسم الله الرحمن الرحيم')),
+      _toCodes(ArabicNormalizer.key('أعوذ بالله من الشيطان الرجيم')),
+      fatiha,
+      surahStarts,
+    );
+  }
+
+  static Uint8List _toCodes(String key) {
+    final out = Uint8List(key.length);
+    for (var i = 0; i < key.length; i++) {
+      out[i] = ArabicNormalizer.letterIndex(key.codeUnitAt(i));
+    }
+    return out;
+  }
+
+  static int _hash(Uint8List c, int i) =>
+      ((c[i] * 27 + c[i + 1]) * 27 + c[i + 2]) * 27 + c[i + 3];
+
+  /// رقم الآية (index بالقائمة) اللي فيها الموقع [pos] بالنص المتصل.
+  int _ayahIndexAt(int pos) {
+    var lo = 0, hi = _surah.length - 1;
+    while (lo < hi) {
+      final mid = (lo + hi + 1) >> 1;
+      if (_starts[mid] <= pos) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return lo;
+  }
+
+  /// موقع بداية/نهاية آية معينة بالنص المتصل (لتهيئة السياق يدوياً).
+  int? corpusStartOf(int surah, int ayah) {
+    for (var i = 0; i < _surah.length; i++) {
+      if (_surah[i] == surah && _ayah[i] == ayah) return _starts[i];
+    }
+    return null;
+  }
+
+  int? corpusEndOf(int surah, int ayah) {
+    for (var i = 0; i < _surah.length; i++) {
+      if (_surah[i] == surah && _ayah[i] == ayah) return _starts[i + 1];
+    }
+    return null;
+  }
+
+  /// يطابق نص [asrText] (ناتج التعرف على الصوت لمقطع واحد) مع القرآن.
+  ///
+  /// [previousEnd]: `corpusEnd` تبع المقطع السابق بنفس التلاوة (اختياري).
+  /// بيرجّع null لو النص قصير جداً أو ما في أي تطابق معقول.
+  QuranMatch? match(String asrText, {int? previousEnd, int topN = 8}) {
+    final query = ArabicNormalizer.keyWithMap(asrText);
+    var q = _toCodes(query.key);
+    if (q.length > maxQueryLetters) {
+      q = Uint8List.sublistView(q, 0, maxQueryLetters);
+    }
+
+    // --- المقدمات: الاستعاذة ثم البسملة ببداية المقطع ---
+    final preambles = <Preamble>[];
+    var offset = 0;
+    var preambleSimilarity = 1.0;
+    for (final type in [PreambleType.istiadha, PreambleType.basmala]) {
+      final p = type == PreambleType.istiadha ? _istiadha : _basmala;
+      final hit = _prefixMatch(Uint8List.sublistView(q, offset), p);
+      if (hit != null) {
+        preambles.add(Preamble(type, offset, offset + hit.$1));
+        preambleSimilarity = math.min(preambleSimilarity, hit.$2);
+        offset += hit.$1;
+      }
+    }
+    final body = Uint8List.sublistView(q, offset);
+
+    if (body.length < minQueryLetters) {
+      if (preambles.isEmpty) return null;
+      // المقطع كله استعاذة/بسملة. لو بسملة وبعدها الفاتحة، بتكون 1:1.
+      final isFatihaStart = preambles.last.type == PreambleType.basmala &&
+          _fatihaFirstIndex >= 0 &&
+          previousEnd == null;
+      return QuranMatch(
+        similarity: preambleSimilarity,
+        confidence: preambleSimilarity * 0.9,
+        isAmbiguous: false,
+        continuesContext: false,
+        corpusStart: previousEnd ?? 0,
+        corpusEnd: previousEnd ?? 0,
+        ayahs: const [],
+        preambles: preambles,
+        alternatives: isFatihaStart ? const [AlternativeMatch(1, 1, 1)] : const [],
+        query: query,
+      );
+    }
+
+    // البسملة غالباً بتنقرأ ببداية سورة → المرشح اللي ببداية سورة أولى.
+    final afterBasmala = preambles.isNotEmpty &&
+        preambles.last.type == PreambleType.basmala;
+    final cand = _verify(body, previousEnd, topN, afterBasmala);
+    if (cand.isEmpty) return null;
+    final best = cand.first;
+    final m = body.length;
+
+    // تفرّد: أقرب منافس بموقع مختلف.
+    _Candidate? second;
+    for (final c in cand.skip(1)) {
+      if ((c.start - best.start).abs() > m ~/ 2) {
+        second = c;
+        break;
+      }
+    }
+    final margin = best.similarity - (second?.similarity ?? 0);
+    final resolved = best.inContext || best.atSurahStart;
+    final uniqueness =
+        resolved ? 1.0 : (0.5 + margin / 0.3).clamp(0.5, 1.0);
+    final lengthFactor = math.min(1.0, m / 24);
+    final confidence = best.similarity * lengthFactor * uniqueness;
+
+    // traceback للمرشح الأفضل → تقسيم على الآيات.
+    final spans = _spans(body, best.start, best.end, offset);
+
+    // لو انقرأت البسملة وبعدها مباشرة 1:2، فالبسملة هي الآية 1:1.
+    if (preambles.isNotEmpty &&
+        preambles.last.type == PreambleType.basmala &&
+        spans.isNotEmpty &&
+        spans.first.surah == 1 &&
+        spans.first.ayah == 2) {
+      final b = preambles.removeLast();
+      spans.insert(0, AyahSpan(1, 1, 1.0, b.queryStart, b.queryEnd));
+    }
+
+    final alternatives = <AlternativeMatch>[];
+    for (final c in cand.skip(1)) {
+      if ((c.start - best.start).abs() <= m ~/ 2) continue;
+      if (best.similarity - c.similarity > 0.15) break;
+      final ai = _ayahIndexAt(c.start);
+      alternatives.add(AlternativeMatch(_surah[ai], _ayah[ai], c.similarity));
+      if (alternatives.length >= 3) break;
+    }
+
+    return QuranMatch(
+      similarity: best.similarity,
+      confidence: confidence,
+      isAmbiguous: !resolved && margin < 0.1,
+      continuesContext: best.inContext,
+      corpusStart: best.start,
+      corpusEnd: best.end,
+      ayahs: spans,
+      preambles: preambles,
+      alternatives: alternatives,
+      query: query,
+    );
+  }
+
+  // ---------------------------------------------------------------------
+
+  /// هل [p] (مقدمة) موجودة ببداية [q]؟ بيرجّع (طولها بالاستعلام، تشابه).
+  (int, double)? _prefixMatch(Uint8List q, Uint8List p) {
+    if (q.length < p.length - 3) return null;
+    final maxErr = math.max(2, (p.length * 0.15).floor());
+    // edit distance بين p وكل بادئة من q بطول p±4.
+    final maxLen = math.min(q.length, p.length + 4);
+    var prev = List<int>.generate(maxLen + 1, (j) => j);
+    for (var i = 1; i <= p.length; i++) {
+      final cur = List<int>.filled(maxLen + 1, 0);
+      cur[0] = i;
+      for (var j = 1; j <= maxLen; j++) {
+        final sub = prev[j - 1] + (p[i - 1] == q[j - 1] ? 0 : 1);
+        cur[j] = math.min(sub, math.min(prev[j] + 1, cur[j - 1] + 1));
+      }
+      prev = cur;
+    }
+    var bestLen = -1, bestD = 1 << 30;
+    for (var j = math.max(0, p.length - 4); j <= maxLen; j++) {
+      if (prev[j] < bestD || (prev[j] == bestD && j > bestLen)) {
+        bestD = prev[j];
+        bestLen = j;
+      }
+    }
+    if (bestLen < 0 || bestD > maxErr) return null;
+    // لازم يكون في شي بعدها أو تكون هي كل المقطع.
+    return (bestLen, 1 - bestD / p.length);
+  }
+
+  List<_Candidate> _verify(
+      Uint8List q, int? previousEnd, int topN, bool preferSurahStart) {
+    final m = q.length;
+    final votes = <int, double>{};
+    if (m >= gramSize) {
+      for (var i = 0; i + gramSize <= m; i++) {
+        final occ = _grams[_hash(q, i)];
+        if (occ == null || occ.length > _maxGramFrequency) continue;
+        final w = 1.0 / math.log(2 + occ.length);
+        for (final p in occ) {
+          final b = (p - i) ~/ _bucket;
+          votes[b] = (votes[b] ?? 0) + w;
+        }
+      }
+    }
+    if (previousEnd != null) {
+      final b = previousEnd ~/ _bucket;
+      votes[b] = (votes[b] ?? 0) + 1e9; // دايماً نتحقق من "يكمّل من السابق"
+    }
+    if (votes.isEmpty) return const [];
+
+    final ranked = votes.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final seen = <int>[];
+    final out = <_Candidate>[];
+    for (final e in ranked.take(topN * 3)) {
+      final d = e.key * _bucket;
+      if (seen.any((s) => (d - s).abs() < m ~/ 2 + _bucket)) continue;
+      seen.add(d);
+      final lo = math.max(0, d - m ~/ 4 - 8);
+      final hi = math.min(_codes.length, d + m + m ~/ 4 + 8);
+      final r = _semiGlobal(q, lo, hi);
+      final sim = 1 - r.$1 / m;
+      final inCtx = previousEnd != null &&
+          r.$2 >= previousEnd - m ~/ 2 - 10 &&
+          r.$2 <= previousEnd + 300;
+      final atStart = preferSurahStart &&
+          (_surahStarts.contains(r.$2) ||
+              _surahStarts.contains(r.$2 - 1) ||
+              _surahStarts.contains(r.$2 + 1));
+      out.add(_Candidate(sim, r.$2, r.$3, inCtx, atStart));
+      if (seen.length >= topN) break;
+    }
+    out.sort((a, b) => b.rank.compareTo(a.rank));
+    return out;
+  }
+
+  /// أقل مسافة تعديل بين q وأي جزء من corpus[lo:hi]. بيرجّع
+  /// (المسافة، البداية، النهاية) كمواقع مطلقة بالنص المتصل.
+  (int, int, int) _semiGlobal(Uint8List q, int lo, int hi) {
+    final n = hi - lo;
+    var prev = Int32List(n + 1);
+    var prevStart = Int32List(n + 1);
+    for (var j = 0; j <= n; j++) {
+      prevStart[j] = j;
+    }
+    var cur = Int32List(n + 1);
+    var curStart = Int32List(n + 1);
+    for (var i = 1; i <= q.length; i++) {
+      cur[0] = i;
+      curStart[0] = 0;
+      final qi = q[i - 1];
+      for (var j = 1; j <= n; j++) {
+        final sub = prev[j - 1] + (qi == _codes[lo + j - 1] ? 0 : 1);
+        final del = prev[j] + 1;
+        final ins = cur[j - 1] + 1;
+        if (sub <= del && sub <= ins) {
+          cur[j] = sub;
+          curStart[j] = prevStart[j - 1];
+        } else if (del <= ins) {
+          cur[j] = del;
+          curStart[j] = prevStart[j];
+        } else {
+          cur[j] = ins;
+          curStart[j] = curStart[j - 1];
+        }
+      }
+      final t = prev;
+      prev = cur;
+      cur = t;
+      final ts = prevStart;
+      prevStart = curStart;
+      curStart = ts;
+    }
+    var bestJ = 0;
+    for (var j = 1; j <= n; j++) {
+      if (prev[j] <= prev[bestJ]) bestJ = j; // عند التعادل: الأطول
+    }
+    return (prev[bestJ], lo + prevStart[bestJ], lo + bestJ);
+  }
+
+  /// محاذاة كاملة (مع traceback) بين q و corpus[start:end) وتقسيمها على
+  /// الآيات. [queryOffset] = طول المقدمات المحذوفة من بداية الاستعلام.
+  List<AyahSpan> _spans(Uint8List q, int start, int end, int queryOffset) {
+    final m = q.length, n = end - start;
+    if (n <= 0) return [];
+    final w = n + 1;
+    final d = Uint16List((m + 1) * w);
+    for (var j = 0; j <= n; j++) {
+      d[j] = j;
+    }
+    for (var i = 1; i <= m; i++) {
+      d[i * w] = i;
+      final qi = q[i - 1];
+      for (var j = 1; j <= n; j++) {
+        final sub = d[(i - 1) * w + j - 1] + (qi == _codes[start + j - 1] ? 0 : 1);
+        final del = d[(i - 1) * w + j] + 1;
+        final ins = d[i * w + j - 1] + 1;
+        d[i * w + j] = math.min(sub, math.min(del, ins));
+      }
+    }
+    // qAt[j] = رقم حرف الاستعلام المقابل لحرف القرآن start+j.
+    final qAt = Int32List(n);
+    var i = m, j = n;
+    while (j > 0) {
+      final here = d[i * w + j];
+      if (i > 0 &&
+          here == d[(i - 1) * w + j - 1] + (q[i - 1] == _codes[start + j - 1] ? 0 : 1)) {
+        qAt[j - 1] = i - 1;
+        i--;
+        j--;
+      } else if (i > 0 && here == d[(i - 1) * w + j] + 1) {
+        i--;
+      } else {
+        qAt[j - 1] = i > 0 ? i - 1 : 0;
+        j--;
+      }
+    }
+
+    final spans = <AyahSpan>[];
+    var ai = _ayahIndexAt(start);
+    while (ai < _surah.length && _starts[ai] < end) {
+      final aStart = _starts[ai], aEnd = _starts[ai + 1];
+      final s = math.max(aStart, start), e = math.min(aEnd, end);
+      if (e > s) {
+        final len = aEnd - aStart;
+        spans.add(AyahSpan(
+          _surah[ai],
+          _ayah[ai],
+          len == 0 ? 1 : (e - s) / len,
+          queryOffset + qAt[s - start],
+          queryOffset + qAt[e - 1 - start] + 1,
+        ));
+      }
+      ai++;
+    }
+    // آيات بأطرافها مغطاة بحرف أو حرفين بس غالباً ضجيج محاذاة: نشيلها.
+    spans.removeWhere((s) =>
+        spans.length > 1 && s.coverage < 0.08 && (s.queryEnd - s.queryStart) < 3);
+    return spans;
+  }
+}
+
+class _Candidate {
+  final double similarity;
+  final int start;
+  final int end;
+  final bool inContext;
+  final bool atSurahStart;
+  const _Candidate(
+      this.similarity, this.start, this.end, this.inContext, this.atSurahStart);
+  double get rank =>
+      similarity +
+      (inContext ? QuranMatcher._contextBonus : 0) +
+      (atSurahStart ? QuranMatcher._surahStartBonus : 0);
+}

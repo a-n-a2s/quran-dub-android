@@ -36,6 +36,9 @@ jobs:
       - name: Analyze (غير قاطع مؤقتاً)
         run: flutter analyze || true
 
+      - name: Matching tests (QuranMatcher)
+        run: flutter test test/matching
+
       - name: Build debug APK
         run: flutter build apk --debug
 
