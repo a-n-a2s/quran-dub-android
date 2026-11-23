@@ -7,6 +7,6 @@ void main() {
   testWidgets('Home screen shows app title', (WidgetTester tester) async {
     await tester.pumpWidget(const QuranDubApp());
 
-    expect(find.text('تلاوة وتفسير'), findsWidgets);
+    expect(find.text('آية ستوديو'), findsWidgets);
   });
 }

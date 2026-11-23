@@ -7,7 +7,7 @@ void main() {
   runApp(const QuranDubApp());
 }
 
-/// تطبيق "تلاوة وتفسير" (اسم مؤقت)
+/// تطبيق "آية ستوديو – Ayah Studio" (اسم مبدئي)
 /// يطابق أي فيديو فيه تلاوة قرآنية مع نص القرآن والتفسير الميسر تلقائياً.
 class QuranDubApp extends StatelessWidget {
   const QuranDubApp({super.key});
@@ -15,7 +15,7 @@ class QuranDubApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'تلاوة وتفسير',
+      title: 'آية ستوديو',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0E6B52)),
@@ -62,7 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('تلاوة وتفسير')),
+      appBar: AppBar(title: const Text('آية ستوديو')),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),

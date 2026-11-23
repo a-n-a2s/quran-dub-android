@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.tijara.quran_dub"
+    namespace = "com.ayahstudio.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -15,8 +15,8 @@ android {
     }
 
     defaultConfig {
-        // اسم الحزمة المؤقت - رح يتغيّر لما نحدد الاسم والمعرف النهائي للتطبيق
-        applicationId = "com.tijara.quran_dub"
+        // اسم الحزمة النهائي (قرار أنس، ملف المواصفات). ما بيتغيّر بعد أول نشر.
+        applicationId = "com.ayahstudio.app"
         minSdk = 23
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
