@@ -188,8 +188,12 @@ List<RecitationSegment> segmentsFromMatches(
 
   for (final e in events) {
     if (e is _AyahItem) {
+      // آية ثانية، أو نفس الآية بس القارئ رجع عادها (بلّش قبل وين وقف):
+      // تلاوة جديدة للآية بأجزائها وتفسيرها، مش "جزء" من الأولى.
       if (group.isNotEmpty &&
-          (group.last.surah != e.surah || group.last.ayah != e.ayah)) {
+          (group.last.surah != e.surah ||
+              group.last.ayah != e.ayah ||
+              (e.ks >= 0 && group.last.ke >= 0 && e.ks < group.last.ke - 3))) {
         flush();
       }
       group.add(e);

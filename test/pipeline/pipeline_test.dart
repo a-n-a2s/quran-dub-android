@@ -159,6 +159,20 @@ void main() {
         isTrue, reason: kursi.first.text);
   });
 
+  test('reciter repeats an ayah: a new reading, not part 2 of the first', () {
+    final segs = buildRecitationSegments(matcher, text, [
+      seg(0, 5, 'يوم نقول لجهنم هل امتلات وتقول هل من مزيد'),
+      seg(6, 11, 'يوم نقول لجهنم هل امتلات وتقول هل من مزيد'),
+    ]);
+    expect(segs.map((s) => s.ref).toList(), ['50:30', '50:30'],
+        reason: segs.map((s) => s.describe()).join('\n'));
+    for (final s in segs) {
+      expect([s.kind, s.part, s.partCount, s.showAyahNumber],
+          [SegmentKind.fullAyah, 1, 1, true], reason: s.describe());
+      expect(s.tafsir, s.tafsirFull);
+    }
+  });
+
   test('istiadha hidden, basmala shown without tafsir before a surah', () {
     final segs = buildRecitationSegments(matcher, text, [
       seg(0, 4, 'اعوذ بالله من الشيطان الرجيم'),
