@@ -108,6 +108,33 @@ void main() {
     expect(m.start, closeTo(8, 0.01));
     expect(m.end, closeTo(12, 0.01));
     expect(segs.where((s) => s.inferred).length, 1);
+
+    // نفس الشي لما الآيتين بنفس مقطع VAD (مقطع الاختبار على الجوال):
+    // (التعرف ما طلّع إشي من 8 لـ 12 ثانية، بس الـ VAD ما قطع المقطع.)
+    final p1 = seg(0, 8, 'الحمد لله رب العلمين الرحمن الرحيم');
+    final p2 = seg(12, 20, 'اياك نعبد واياك نستعين');
+    final one = buildRecitationSegments(matcher, text, [
+      AsrSegment(
+        start: 0,
+        end: 20,
+        text: '${p1.text} ${p2.text}',
+        charTimes: [...p1.charTimes, 8.0, ...p2.charTimes],
+        tokens: const [],
+        timestamps: const [],
+      ),
+    ]);
+    expect(pipelineAyahRefs(one), ['1:2', '1:3', '1:4', '1:5'],
+        reason: one.map((s) => s.describe()).join('\n'));
+
+    // ومع كلام خربان بالنص (ضجيج قوي) مكان الآية الناقصة:
+    final noisy = buildRecitationSegments(matcher, text, [
+      seg(0, 8, 'الحمد لله رب العلمين الرحمن الرحيم'),
+      seg(8.5, 10, 'شسيب'),
+      seg(12, 16, 'اياك نعبد واياك نستعين'),
+    ]);
+    expect(pipelineAyahRefs(noisy), ['1:2', '1:3', '1:4', '1:5'],
+        reason: noisy.map((s) => s.describe()).join('\n'));
+    expect(noisy.where((s) => s.kind == SegmentKind.nonQuran), isEmpty);
   });
 
   test('one-word segments too short to match alone are put back (55:1, "الله")', () {

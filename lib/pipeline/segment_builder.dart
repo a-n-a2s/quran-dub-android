@@ -63,9 +63,13 @@ class _AyahItem {
   final bool review;
   final String asr;
   final bool inferred;
+
+  /// وقت آخر حرف فعلاً (قبل ما نمدّ النهاية لبداية الآية الجاية).
+  double rawEnd;
   _AyahItem(this.surah, this.ayah, this.ks, this.ke, this.start, this.end,
       this.confidence, this.review, this.asr,
-      {this.inferred = false});
+      {this.inferred = false, double? rawEnd})
+      : rawEnd = rawEnd ?? end;
 }
 
 List<RecitationSegment> segmentsFromMatches(
@@ -166,7 +170,8 @@ List<RecitationSegment> segmentsFromMatches(
         t1 = math.max(t1, t0s[k + 1] - 0.2);
       }
       events.add(_AyahItem(a.surah, a.ayah, a.keyStart, a.keyEnd, t0,
-          t1 < t0 ? t0 : t1, r.confidence, review, asr));
+          t1 < t0 ? t0 : t1, r.confidence, review, asr,
+          rawEnd: k == r.ayahs.length - 1 ? null : math.max(t0, t1s[k])));
     }
   }
 
@@ -347,15 +352,27 @@ void _inferMissingAyahs(
     QuranTextSource text, List<Object> events, PipelineOptions options) {
   if (options.inferMaxMissing <= 0) return;
   for (var i = 0; i + 1 < events.length; i++) {
-    final a = events[i], b = events[i + 1];
-    if (a is! _AyahItem || b is! _AyahItem) continue;
+    final a = events[i];
+    if (a is! _AyahItem) continue;
+    // الآية الجاية، مع السماح بمقاطع "مش قرآن" بينهم (كلام التعرف خرّبه،
+    // غالباً هو الآيات الناقصة نفسها، زي الضجيج القوي).
+    var j = i + 1;
+    while (j < events.length &&
+        events[j] is RecitationSegment &&
+        (events[j] as RecitationSegment).kind == SegmentKind.nonQuran) {
+      j++;
+    }
+    if (j >= events.length) continue;
+    final b = events[j];
+    if (b is! _AyahItem) continue;
     final missing = b.ayah - a.ayah - 1;
     if (a.surah != b.surah || missing < 1 || missing > options.inferMaxMissing) {
       continue;
     }
     if (math.min(a.confidence, b.confidence) < 0.5) continue;
-    final gap = b.start - a.end;
+    final gap = b.start - a.rawEnd;
     if (gap < options.inferMinSecondsPerAyah * missing) continue;
+    a.end = a.rawEnd;
     final lens = [
       for (var k = 1; k <= missing; k++)
         ArabicNormalizer.key(text.ayah(a.surah, a.ayah + k)?.uthmani ?? '')
@@ -363,7 +380,7 @@ void _inferMissingAyahs(
             .clamp(1, 1 << 20),
     ];
     final total = lens.fold<int>(0, (x, y) => x + y);
-    var t = a.end;
+    var t = a.rawEnd;
     final add = <_AyahItem>[];
     for (var k = 0; k < missing; k++) {
       final d = gap * lens[k] / total;
@@ -372,7 +389,9 @@ void _inferMissingAyahs(
           inferred: true));
       t += d;
     }
-    events.insertAll(i + 1, add);
+    events
+      ..removeRange(i + 1, j)
+      ..insertAll(i + 1, add);
     i += add.length;
   }
 }
