@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'data/quran_database.dart';
+import 'debug/asr_debug_panel.dart';
 import 'matching/quran_matcher_service.dart';
 
 void main() {
@@ -21,6 +22,9 @@ class QuranDubApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0E6B52)),
         useMaterial3: true,
       ),
+      // الواجهة عربي (يوم 10: 4 لغات واجهة).
+      builder: (context, child) =>
+          Directionality(textDirection: TextDirection.rtl, child: child!),
       home: const HomeScreen(),
     );
   }
@@ -63,10 +67,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('آية ستوديو')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: FutureBuilder<_SeedStatus>(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          children: [
+            FutureBuilder<_SeedStatus>(
             future: _seedFuture,
             builder: (context, snapshot) {
               if (snapshot.hasError) {
@@ -117,6 +122,10 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
+            const SizedBox(height: 24),
+            // زر تجربة التعرف على الصوت على الجوال (يوم 4).
+            const AsrDebugPanel(),
+          ],
         ),
       ),
     );

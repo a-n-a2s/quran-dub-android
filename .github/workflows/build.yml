@@ -36,16 +36,49 @@ jobs:
       - name: Analyze (غير قاطع مؤقتاً)
         run: flutter analyze || true
 
-      - name: Matching tests (QuranMatcher)
-        run: flutter test test/matching
+      - name: Tests (QuranMatcher + WAV/ASR helpers)
+        run: flutter test test/matching test/asr
 
       - name: Build debug APK
         run: flutter build apk --debug
 
+      - name: APK size report (debug)
+        run: |
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          {
+            echo "## حجم APK التجريبي (debug)"
+            echo
+            echo "**$(du -h "$apk" | cut -f1)** ($(stat -c %s "$apk") bytes)"
+            echo
+            echo "| ABI | native libs (compressed in APK) |"
+            echo "|---|---|"
+            for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+              n=$(unzip -lv "$apk" "lib/$abi/*" 2>/dev/null | awk '$8 ~ /\.so$/ {c+=$3} END {printf "%.1f MB", c/1048576}')
+              echo "| $abi | $n |"
+            done
+            echo
+            echo '```'
+            unzip -lv "$apk" 'lib/*' | awk '$8 ~ /\.so$/ {printf "%-55s %8.1f MB (raw %6.1f MB)\n", $8, $3/1048576, $1/1048576}'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: quran-dub-debug-apk-${{ github.run_number }}
+          name: ayah-studio-debug-apk-${{ github.run_number }}
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      # حجم النسخة الحقيقية للمستخدم (release مقسومة حسب المعالج). مش قاطع.
+      - name: Release APK sizes (--split-per-abi)
+        continue-on-error: true
+        run: |
+          flutter build apk --release --split-per-abi
+          {
+            echo "## حجم APK النهائي (release، لكل معالج)"
+            echo
+            for f in build/app/outputs/flutter-apk/app-*-release.apk; do
+              echo "- $(basename "$f"): **$(du -h "$f" | cut -f1)**"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"

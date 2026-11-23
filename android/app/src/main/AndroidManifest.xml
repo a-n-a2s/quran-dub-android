@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- لتحميل ملفات محرك التعرف مرة وحدة (asr-model-v1)؛ بعدها كل شي offline -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:label="آية ستوديو"
         android:name="${applicationName}"
