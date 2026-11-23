@@ -11,9 +11,21 @@ class NativeDecodeResult {
   final int frames;
   final String mime;
   final int elapsedMs;
+
+  /// وقت كل جزء بالفك (يوم 6، لقياس أين الوقت عم بيروح — شوف
+  /// `AudioDecoder.kt`). المجموع تقريباً = [elapsedMs].
+  final int extractorMs;
+  final int decodeMs;
+  final int writeMs;
+
   const NativeDecodeResult(this.wavPath, this.sampleRate, this.channels,
-      this.frames, this.mime, this.elapsedMs);
+      this.frames, this.mime, this.elapsedMs,
+      {this.extractorMs = 0, this.decodeMs = 0, this.writeMs = 0});
   double get seconds => sampleRate == 0 ? 0 : frames / sampleRate;
+
+  /// ثانية فك لكل دقيقة صوت (الهدف يوم 6: أقل من 2).
+  double get secondsPerMinuteOfAudio =>
+      seconds == 0 ? 0 : (elapsedMs / 1000) / (seconds / 60);
 }
 
 /// فك أي ملف صوت أو فيديو على الجوال (MediaExtractor + MediaCodec بالـ
@@ -33,6 +45,9 @@ class NativeAudioDecoder {
       r['frames'] as int,
       r['mime'] as String,
       r['elapsedMs'] as int,
+      extractorMs: (r['extractorMs'] as int?) ?? 0,
+      decodeMs: (r['decodeMs'] as int?) ?? 0,
+      writeMs: (r['writeMs'] as int?) ?? 0,
     );
   }
 

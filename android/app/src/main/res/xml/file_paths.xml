@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- يوم 6: مجلدات cache اللي FileProvider بيقدر يشارك ملفات منها (فيديو
+     الكاميرا، والفيديو/الصوت المنسوخ من المعرض أو ملف منفصل). -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="camera" path="camera/" />
+    <cache-path name="gallery" path="gallery/" />
+    <cache-path name="picked" path="." />
+</paths>

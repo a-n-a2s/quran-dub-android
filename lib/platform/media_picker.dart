@@ -7,9 +7,11 @@ class PickedMedia {
   const PickedMedia(this.path, this.name, this.bytes);
 }
 
-/// اختيار ملف صوت أو فيديو من الجوال (يوم 5، للتجربة). Storage Access
+/// اختيار ملف صوت أو فيديو من الجوال (يوم 5، للتجربة؛ يوم 6: نفسه لاختيار
+/// ملف تلاوة منفصل بيتركّب على الفيديو، المواصفات القسم 2). Storage Access
 /// Framework بالـ Kotlin (MainActivity)، بدون مكتبة خارجية ولا صلاحيات.
-/// الملف بينسخ لـ cache التطبيق. يوم 6: المعرض والكاميرا.
+/// الملف بينسخ لـ cache التطبيق. (اختيار الفيديو نفسه من المعرض صار له
+/// طريق مخصص بـ `gallery_picker.dart` — Photo Picker + تقدّم نسخ.)
 class MediaPicker {
   static const _channel = MethodChannel('com.ayahstudio.app/picker');
 

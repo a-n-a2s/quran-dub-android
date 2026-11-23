@@ -19,7 +19,13 @@ import kotlin.math.roundToInt
  * sample rate الأصلي. التحويل لـ 16kHz بيصير بـ Dart (WavAudio).
  *
  * يوم 4: عشان المحرك يقبل أي ملف تلاوة (حسب المواصفات التلاوة ممكن تيجي من
- * ملف منفصل). يوم 6 رح يستعمله لاستخراج الصوت من الفيديو.
+ * ملف منفصل). يوم 6: استعماله لاستخراج الصوت من الفيديو صار الطريق الرئيسي
+ * (رفع مقطع فيديو)، فانضاف قياس وقت كل جزء (extractor/decode/write) وتصليحين
+ * بسيطين للسرعة (timeout أصغر بكل دورة، buffer كتابة أكبر، وبدون إعادة تخصيص
+ * الـ scratch buffer كل مرة) — بدون تغيير صيغة الناتج (lazy mono بنفس الـ
+ * sample rate الأصلي)، عشان دقّة التعرف المتحقق منها يوم 3-5 ما تتأثر.
+ * القياس الحقيقي (على جوال أنس، مقطع 58.8 ثانية AAC 48kHz كان 10.8 ثانية،
+ * أبطأ من التعرف نفسه) محتاج تجربة فعلية على الجوال (شوف ملف الخطة).
  */
 object AudioDecoder {
     data class Result(
@@ -28,13 +34,24 @@ object AudioDecoder {
         val frames: Long,
         val mime: String,
         val elapsedMs: Long,
+        /** وقت فتح الملف وإيجاد مسار الصوت وتجهيز الـ codec. */
+        val extractorMs: Long,
+        /** وقت حلقة الفك نفسها (dequeue/queue)، بدون وقت الكتابة. */
+        val decodeMs: Long,
+        /** وقت تحويل كل buffer لـ mono وكتابته (جزء من الحلقة، مقاس لحاله). */
+        val writeMs: Long,
     )
+
+    /** مهلة كل استدعاء dequeue بالحلقة. أصغر من قبل (كانت 10ms) عشان ما
+     * نستنى لحد ما يخلص الـ timeout وهو مش ضروري. */
+    private const val TIMEOUT_US = 2_000L
 
     @Throws(IOException::class)
     fun decodeToMonoWav(inputPath: String, outputPath: String): Result {
-        val t0 = System.currentTimeMillis()
+        val tStart = System.currentTimeMillis()
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
+        var writeMs = 0L
         try {
             extractor.setDataSource(inputPath)
             var track = -1
@@ -48,6 +65,7 @@ object AudioDecoder {
                 }
             }
             if (track < 0 || format == null) throw IOException("ما في مسار صوت بالملف")
+            // بس مسار الصوت منتقي (extractor.readSampleData ما بيقرأ غيره).
             extractor.selectTrack(track)
             val mime = format.getString(MediaFormat.KEY_MIME)!!
             var sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
@@ -59,17 +77,20 @@ object AudioDecoder {
             codec = c
             c.configure(format, null, null, 0)
             c.start()
+            val tExtractorDone = System.currentTimeMillis()
 
             var frames = 0L
-            BufferedOutputStream(FileOutputStream(outputPath), 1 shl 16).use { out ->
+            // scratch buffer معاد استعماله عبر كل الـ buffers (بدل تخصيص جديد
+            // كل مرة)، بيكبر لو احتاج.
+            var scratch = ByteArray(1 shl 15)
+            BufferedOutputStream(FileOutputStream(outputPath), 1 shl 18).use { out ->
                 out.write(ByteArray(44)) // header بنكتبه بالآخر
                 val info = MediaCodec.BufferInfo()
                 var inputDone = false
                 var outputDone = false
-                val timeoutUs = 10_000L
                 while (!outputDone) {
                     if (!inputDone) {
-                        val inIdx = c.dequeueInputBuffer(timeoutUs)
+                        val inIdx = c.dequeueInputBuffer(TIMEOUT_US)
                         if (inIdx >= 0) {
                             val buf = c.getInputBuffer(inIdx)!!
                             val size = extractor.readSampleData(buf, 0)
@@ -82,7 +103,7 @@ object AudioDecoder {
                             }
                         }
                     }
-                    val outIdx = c.dequeueOutputBuffer(info, timeoutUs)
+                    val outIdx = c.dequeueOutputBuffer(info, TIMEOUT_US)
                     if (outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                         val f = c.outputFormat
                         sampleRate = f.getInteger(MediaFormat.KEY_SAMPLE_RATE)
@@ -95,8 +116,13 @@ object AudioDecoder {
                         if (buf != null && info.size > 0) {
                             buf.position(info.offset)
                             buf.limit(info.offset + info.size)
-                            frames += writeMono(buf.slice().order(ByteOrder.LITTLE_ENDIAN),
-                                channels, encoding, out)
+                            val tw0 = System.currentTimeMillis()
+                            val needed = (info.size / (bytesPerSample(encoding) * maxOf(channels, 1))) * 2
+                            if (scratch.size < needed) scratch = ByteArray(needed)
+                            val written = writeMono(
+                                buf.slice().order(ByteOrder.LITTLE_ENDIAN), channels, encoding, scratch, out)
+                            frames += written
+                            writeMs += System.currentTimeMillis() - tw0
                         }
                         c.releaseOutputBuffer(outIdx, false)
                         if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
@@ -104,7 +130,11 @@ object AudioDecoder {
                 }
             }
             writeWavHeader(outputPath, sampleRate, frames)
-            return Result(sampleRate, channels, frames, mime, System.currentTimeMillis() - t0)
+            val tDone = System.currentTimeMillis()
+            val extractorMs = tExtractorDone - tStart
+            val decodeMs = (tDone - tExtractorDone) - writeMs
+            return Result(sampleRate, channels, frames, mime, tDone - tStart,
+                extractorMs, decodeMs, writeMs)
         } finally {
             try { codec?.stop() } catch (_: Exception) {}
             codec?.release()
@@ -133,19 +163,20 @@ object AudioDecoder {
         else -> b.short / 32768.0
     }
 
-    /** بيخلط القنوات (متوسط) وبيكتب PCM16 little-endian. بيرجع عدد الإطارات. */
-    private fun writeMono(b: ByteBuffer, channels: Int, encoding: Int, out: OutputStream): Long {
+    /** بيخلط القنوات (متوسط) وبيكتب PCM16 little-endian بـ [scratch] (معاد
+     * استعماله من المتصل، لازم يكون كبير يكفي). بيرجع عدد الإطارات. */
+    private fun writeMono(
+        b: ByteBuffer, channels: Int, encoding: Int, scratch: ByteArray, out: OutputStream): Long {
         val ch = if (channels < 1) 1 else channels
         val frameCount = b.remaining() / (bytesPerSample(encoding) * ch)
-        val bytes = ByteArray(frameCount * 2)
         for (i in 0 until frameCount) {
             var sum = 0.0
             for (k in 0 until ch) sum += readSample(b, encoding)
             val s = ((sum / ch).coerceIn(-1.0, 1.0) * 32767.0).roundToInt()
-            bytes[2 * i] = (s and 0xff).toByte()
-            bytes[2 * i + 1] = ((s shr 8) and 0xff).toByte()
+            scratch[2 * i] = (s and 0xff).toByte()
+            scratch[2 * i + 1] = ((s shr 8) and 0xff).toByte()
         }
-        out.write(bytes)
+        out.write(scratch, 0, frameCount * 2)
         return frameCount.toLong()
     }
 

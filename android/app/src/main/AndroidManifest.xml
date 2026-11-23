@@ -1,6 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- لتحميل ملفات محرك التعرف مرة وحدة (asr-model-v1)؛ بعدها كل شي offline -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- يوم 6: التصوير بالكاميرا من جوا التطبيق. بتنطلب وقت الحاجة بس
+         (lib/platform/camera_recorder.dart)، مش أوتوماتيكي عند فتح التطبيق. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- اختيار المقطع من المعرض وتصوير جديد لا بتحتاج صلاحية تخزين (Photo
+         Picker / SAF / FileProvider، يوم 5-6)، فما ضفنا READ_MEDIA_*. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <application
         android:label="آية ستوديو"
         android:name="${applicationName}"
@@ -25,5 +33,16 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- يوم 6: Uri مشارك مع تطبيق الكاميرا (ACTION_VIDEO_CAPTURE)، بدون
+             ما نعطيه صلاحية كتابة عامة على ملفات التطبيق. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

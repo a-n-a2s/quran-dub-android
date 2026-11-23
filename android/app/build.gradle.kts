@@ -47,3 +47,11 @@ androidComponents {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // يوم 6: FileProvider (مشاركة ملف الكاميرا مع تطبيق الكاميرا) +
+    // ActivityCompat/ContextCompat (صلاحيات CAMERA/RECORD_AUDIO وقت الحاجة).
+    // الطبقة فعلياً موجودة ضمن اعتماديات محرك Flutter، بس بنثبّتها هون
+    // بشكل مباشر عشان ما نعتمد على ترتيب تبعيات غير مضمون.
+    implementation("androidx.core:core-ktx:1.13.1")
+}

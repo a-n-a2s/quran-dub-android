@@ -1,8 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'data/quran_database.dart';
 import 'debug/asr_debug_panel.dart';
 import 'matching/quran_matcher_service.dart';
+import 'pipeline/project_input.dart';
+import 'platform/camera_recorder.dart';
+import 'platform/gallery_picker.dart';
+import 'platform/video_info.dart';
+import 'screens/analysis_screen.dart';
 
 void main() {
   runApp(const QuranDubApp());
@@ -42,6 +49,79 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late final Future<_SeedStatus> _seedFuture = _checkSeedStatus();
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _openAnalysis(String videoPath, VideoSource source) async {
+    try {
+      final info = await VideoInfoReader.read(videoPath);
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => AnalysisScreen(
+          input: ProjectInput(
+              videoPath: videoPath, source: source, videoInfo: info),
+        ),
+      ));
+    } catch (e) {
+      _showError('ما قدرنا نقرأ معلومات الفيديو: $e');
+    }
+  }
+
+  /// اختيار مقطع من المعرض (Photo Picker أو SAF، يوم 6)، مع شاشة تقدّم نسخ
+  /// بسيطة عشان ما "يتعلّق" التطبيق مع الفيديوهات الكبيرة.
+  Future<void> _pickFromGallery() async {
+    final progress = ValueNotifier<GalleryCopyProgress?>(null);
+    unawaited(showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        content: ValueListenableBuilder<GalleryCopyProgress?>(
+          valueListenable: progress,
+          builder: (_, p, __) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LinearProgressIndicator(value: p?.fraction),
+              const SizedBox(height: 12),
+              Text(p?.fraction == null
+                  ? 'جاري اختيار الفيديو من المعرض...'
+                  : 'جاري نسخ الفيديو... ${(p!.fraction! * 100).round()}%'),
+            ],
+          ),
+        ),
+      ),
+    ));
+    try {
+      final picked =
+          await GalleryPicker.pickVideo(onProgress: (p) => progress.value = p);
+      if (!mounted) return;
+      Navigator.of(context).pop(); // سكّر شاشة التقدّم.
+      if (picked == null) return;
+      await _openAnalysis(picked.path, VideoSource.gallery);
+    } catch (e) {
+      if (mounted) Navigator.of(context).pop();
+      _showError('ما قدرنا نجيب الفيديو من المعرض: $e');
+    }
+  }
+
+  /// تصوير مقطع من جوا التطبيق (يوم 6): صلاحيات الكاميرا/المايكروفون
+  /// بتنطلب هون بس، وقت الحاجة.
+  Future<void> _recordFromCamera() async {
+    try {
+      final recorded = await CameraRecorder.recordVideo();
+      if (recorded == null) return; // المستخدم لغى التصوير.
+      await _openAnalysis(recorded.path, VideoSource.camera);
+    } on CameraPermissionDeniedException catch (e) {
+      _showError('$e');
+    } on NoCameraAppException catch (e) {
+      _showError('$e');
+    } catch (e) {
+      _showError('ما قدرنا نفتح الكاميرا: $e');
+    }
+  }
 
   Future<_SeedStatus> _checkSeedStatus() async {
     final db = await QuranDatabase.instance.database;
@@ -122,6 +202,28 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
+            const SizedBox(height: 24),
+            // يوم 6: رفع مقطع من المعرض أو تصوير مباشر. شكل بسيط هلأ
+            // (الهوية الخضراء/الذهبية بأيام الواجهات، يوم 13).
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _pickFromGallery,
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('رفع مقطع'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _recordFromCamera,
+                    icon: const Icon(Icons.videocam),
+                    label: const Text('تصوير'),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 24),
             // زر تجربة التعرف على الصوت على الجوال (يوم 4).
             const AsrDebugPanel(),
