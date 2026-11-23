@@ -51,6 +51,11 @@ jobs:
             echo
             echo "**$(du -h "$apk" | cut -f1)** ($(stat -c %s "$apk") bytes)"
             echo
+            aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+            echo '```'
+            "$aapt2" dump badging "$apk" | grep -E "^package:|^application-label|^uses-permission|^native-code|^sdkVersion" || true
+            echo '```'
+            echo
             echo "| ABI | native libs (compressed in APK) |"
             echo "|---|---|"
             for abi in arm64-v8a armeabi-v7a x86_64 x86; do

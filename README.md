@@ -38,6 +38,27 @@ SQLite محلية مرة واحدة فقط أول ما يفتح التطبيق. 
   على تلاوات حقيقية لعدة قرّاء وبيطبع النتيجة (`tool/match_transcripts.dart`).
   للتجربة محلياً: `tool/asr_prototype/` + `dart run tool/match_transcripts.dart`.
 
+## التعرف على الجوال (يوم 4)
+
+- **الباكج**: [`sherpa_onnx`](https://pub.dev/packages/sherpa_onnx) 2.0.3 (k2-fsa،
+  Apache-2.0)، FFI على onnxruntime.
+- `lib/asr/asr_model_manager.dart`: بينزّل ملفات الـ Release `asr-model-v1`
+  (`model.int8.onnx`، `tokens.txt`، `silero_vad.onnx`، ~19.5MB) **مرة وحدة**
+  لمجلد التطبيق، بيتحقق من SHA256 (ملف `SHA256SUMS` + نسخة مثبّتة بالكود)،
+  بيعرض التقدّم، بيعيد المحاولة وبيكمّل من حيث وقف. بعدها كل شي offline.
+- `lib/asr/asr_engine.dart`: `OfflineRecognizer` (zipformerCtc) + Silero VAD
+  على صوت 16kHz mono، بـ isolate. لكل مقطع: النص + التوكنات + توقيت كل حرف.
+- `lib/asr/wav_audio.dart`: قارئ WAV لأي sample rate/قنوات + تحويل لـ 16kHz.
+  باقي الصيغ (mp3، m4a، ogg، flac، وفيديو) بتنفك على الجوال بـ MediaCodec
+  (`AudioDecoder.kt` + `lib/asr/native_audio_decoder.dart`).
+- `lib/asr/recitation_matcher.dart`: `QuranSequenceMatcher` + توقيت كل آية.
+- **زر debug** "تجربة التعرف على الصوت" بالشاشة الرئيسية
+  (`lib/debug/asr_debug_panel.dart`): بينزّل مقطع الفاتحة ويطبع لكل مقطع
+  الوقت، السورة:الآية، الثقة، والـ RTF.
+- **بالـ CI**: `tool/asr_engine_cli.dart` بيشغّل نفس كود `lib/asr/` على Linux
+  (`asr-prototype.yml`)، و`flutter test test/asr`.
+- **APK التجريبي**: arm64-v8a + armeabi-v7a بس، والمكتبات native مضغوطة.
+
 ## الحالة الحالية
 
 شوف `claude/quran-dub-app-plan.md` بمشروع كلود "تطبيق القران" للخطة
