@@ -39,6 +39,8 @@ android {
 androidComponents {
     onVariants(selector().withBuildType("debug")) { variant ->
         variant.packaging.jniLibs.useLegacyPackaging.set(true)
+        // Flutter ما بيحط abiFilters على مكتبات الـ plugins بالـ debug.
+        variant.packaging.jniLibs.excludes.addAll(listOf("**/x86_64/**", "**/x86/**"))
     }
 }
 
