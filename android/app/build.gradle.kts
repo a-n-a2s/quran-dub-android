@@ -1,6 +1,6 @@
 plugins {
     id("com.android.application")
-    id("kotlin-android")
+    // يوم 5: Built-in Kotlin تبع AGP 9 (بدل plugin الـ Kotlin، تحذير Flutter).
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -42,10 +42,6 @@ androidComponents {
         // Flutter ما بيحط abiFilters على مكتبات الـ plugins بالـ debug.
         variant.packaging.jniLibs.excludes.addAll(listOf("**/x86_64/**", "**/x86/**"))
     }
-}
-
-kotlin {
-    jvmToolchain(17)
 }
 
 flutter {
