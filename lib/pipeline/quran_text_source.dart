@@ -57,12 +57,12 @@ class QuranTextSource {
   /// ۞ (بداية الحزب)، ۩ (مكان السجدة)، وعلامات الاتجاه (LRM/RLM/ALM).
   /// علامات الوقف الصغيرة (ۖ ۗ ۚ ...) بتضل، هي جزء من رسم المصحف.
   static String cleanForDisplay(String text) => text
-      .replaceAll(RegExp('[۞۩‎‏؜‪-‮]'), '')
+      .replaceAll(RegExp('[\u06DE\u06E9\u200E\u200F\u061C\u202A-\u202E]'), '')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 
   static String cleanTafsir(String text) => text
-      .replaceAll(RegExp('[‎‏؜‪-‮]'), '')
+      .replaceAll(RegExp('[\u200E\u200F\u061C\u202A-\u202E]'), '')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 }

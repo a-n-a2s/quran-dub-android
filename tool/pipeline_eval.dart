@@ -114,10 +114,17 @@ String evalMarkdown(String title, List<(Map<String, dynamic>, ClipEval)> rows) {
         '| ${e.nonQuranHits.isEmpty ? '-' : e.nonQuranHits.join(' ')} '
         '| ${mx(e.timing.map((t) => t.$2))} | ${mx(e.timing.map((t) => t.$3))} |');
   }
+  final groups = <String, (int, int)>{};
+  for (final (c, e) in rows) {
+    final g = (c['group'] as String?) ?? 'other';
+    final old = groups[g] ?? (0, 0);
+    groups[g] = (old.$1 + (e.exact ? 1 : 0), old.$2 + 1);
+  }
   md
     ..writeln()
     ..writeln('**PIPELINE: exact ${rows.where((r) => r.$2.exact).length}/${rows.length}, '
         'ayah recall $good/$total, wrong $wrong**\n')
+    ..writeln('- حسب المجموعة: ${groups.entries.map((g) => '${g.key} ${g.value.$1}/${g.value.$2}').join('، ')}')
     ..writeln('- خطأ توقيت **البداية** (${starts.length} آية): ${errStats(starts)}')
     ..writeln('- خطأ توقيت **النهاية** (${ends.length} آية): ${errStats(ends)}')
     ..writeln('- (الخطأ = وقت الناتج − بداية/نهاية كلام الآية الحقيقي من ملف everyayah. '

@@ -58,7 +58,7 @@ List<RecitationSegment> buildRecitationSegments(
 class _AyahItem {
   final int surah, ayah;
   int ks, ke; // بمفتاح الآية
-  final double start, end;
+  double start, end;
   final double confidence;
   final bool review;
   final String asr;
@@ -148,18 +148,29 @@ List<RecitationSegment> segmentsFromMatches(
         asrText: asr,
       ));
     }
+    // التوقيت: حدود مقطع VAD (بداية/نهاية الكلام) أدق من توقيت أول/آخر حرف
+    // (محرك CTC بيطلّع الحرف ببداية صوته، والمد بآخر الآية بيطوّل بعده).
+    // فأول آية بالمقطع بتبلّش مع المقطع (لو ما في مقدمات)، وآخر آية بتخلص
+    // معه، والحد بين آيتين جوا المقطع = قبل أول حرف من الآية الجاية بشوي.
+    final t0s = [for (final a in r.ayahs) timeAt(a.queryStart, s.start)];
+    final t1s = [for (final a in r.ayahs) timeAt(a.queryEnd - 1, s.end)];
     for (var k = 0; k < r.ayahs.length; k++) {
       final a = r.ayahs[k];
-      // أول آية بالمقطع بتبلّش مع المقطع لو ما في مقدمات، وآخر آية بتخلص معه.
-      var t0 = timeAt(a.queryStart, s.start);
-      var t1 = timeAt(a.queryEnd - 1, s.end);
-      if (k == 0 && r.preambles.isEmpty && t0 - s.start < 0.6) t0 = s.start;
-      if (k == r.ayahs.length - 1 && s.end - t1 < 0.6) t1 = s.end;
+      var t0 = t0s[k], t1 = t1s[k];
+      if (k == 0 && r.preambles.isEmpty && t0 - s.start < _snapSeconds) {
+        t0 = s.start;
+      }
+      if (k == r.ayahs.length - 1) {
+        if (s.end - t1 < _snapSeconds) t1 = s.end;
+      } else {
+        t1 = math.max(t1, t0s[k + 1] - 0.2);
+      }
       events.add(_AyahItem(a.surah, a.ayah, a.keyStart, a.keyEnd, t0,
           t1 < t0 ? t0 : t1, r.confidence, review, asr));
     }
   }
 
+  _rescueShortSegments(text, events);
   _inferMissingAyahs(text, events, options);
 
   // تجميع الأجزاء المتتالية لنفس الآية.
@@ -249,6 +260,84 @@ List<RecitationSegment> _buildGroup(
     ));
   }
   return out;
+}
+
+const double _snapSeconds = 4.0;
+
+int _editDistance(String a, String b) {
+  var prev = List<int>.generate(b.length + 1, (j) => j);
+  for (var i = 1; i <= a.length; i++) {
+    final cur = List<int>.filled(b.length + 1, 0)..[0] = i;
+    for (var j = 1; j <= b.length; j++) {
+      cur[j] = math.min(
+          prev[j - 1] + (a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1),
+          math.min(prev[j] + 1, cur[j - 1] + 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+bool _close(String a, String b) =>
+    a.isNotEmpty &&
+    b.isNotEmpty &&
+    _editDistance(a, b) <= math.max(1, (b.length * 0.34).floor());
+
+/// مقاطع VAD قصيرة كتير (كلمة وحدة) ما بتنطابق لحالها (أقل من 6 حروف):
+/// مثلاً 55:1 "الرحمن"، أو "الله" ببداية آية الكرسي لما القارئ يوقف بعدها.
+/// لو جنبها آية انطابقت ونصها بيطابق اللي ناقص منها (أو الآية اللي قبلها/
+/// بعدها كاملة)، منرجّعها لمكانها.
+void _rescueShortSegments(QuranTextSource text, List<Object> events) {
+  String keyOf(int s, int a) =>
+      ArabicNormalizer.key(text.ayah(s, a)?.uthmani ?? '');
+  bool shortUnmatched(Object e) =>
+      e is RecitationSegment &&
+      e.kind == SegmentKind.nonQuran &&
+      e.suggestedRef == null &&
+      ArabicNormalizer.key(e.asrText).length <= 12;
+
+  for (var i = 0; i < events.length; i++) {
+    final e = events[i];
+    if (!shortUnmatched(e)) continue;
+    final seg = e as RecitationSegment;
+    final k = ArabicNormalizer.key(seg.asrText);
+    if (k.isEmpty) continue;
+    final next = i + 1 < events.length ? events[i + 1] : null;
+    final prev = i > 0 ? events[i - 1] : null;
+    if (next is _AyahItem && next.start - seg.end < 3) {
+      final ayahKey = keyOf(next.surah, next.ayah);
+      if (next.ks > 0 && _close(k, ayahKey.substring(0, next.ks.clamp(0, ayahKey.length)))) {
+        // أول الآية انقرأ لحاله قبل وقفة.
+        next
+          ..ks = 0
+          ..start = seg.start;
+        events.removeAt(i--);
+        continue;
+      }
+      if (next.ks <= 2 && next.ayah > 1 && _close(k, keyOf(next.surah, next.ayah - 1))) {
+        events[i] = _AyahItem(next.surah, next.ayah - 1, 0, -1, seg.start,
+            seg.end, next.confidence * 0.8, true, seg.asrText);
+        continue;
+      }
+    }
+    if (prev is _AyahItem && seg.start - prev.end < 3) {
+      final ayahKey = keyOf(prev.surah, prev.ayah);
+      final ke = prev.ke < 0 ? ayahKey.length : prev.ke;
+      if (ke < ayahKey.length && _close(k, ayahKey.substring(ke))) {
+        prev
+          ..ke = ayahKey.length
+          ..end = seg.end;
+        events.removeAt(i--);
+        continue;
+      }
+      if (ke >= ayahKey.length - 2 &&
+          text.ayah(prev.surah, prev.ayah + 1) != null &&
+          _close(k, keyOf(prev.surah, prev.ayah + 1))) {
+        events[i] = _AyahItem(prev.surah, prev.ayah + 1, 0, -1, seg.start,
+            seg.end, prev.confidence * 0.8, true, seg.asrText);
+      }
+    }
+  }
 }
 
 /// بين آيتين متتاليتين بالقائمة (بدون بسملة/كلام بينهم) من نفس السورة، لو

@@ -57,6 +57,15 @@ Future<void> main(List<String> args) async {
   print('recognizer init: 2 threads ${rec2.initMs}ms, 4 threads ${rec4.initMs}ms '
       '(once per run, ${Platform.numberOfProcessors} cores)\n');
 
+  // نفس الملف اللي بيجرّبه أنس على جواله (مقطع الاختبار بالـ Release).
+  clips.add({
+    'id': 'release_test_clip_fatiha',
+    'reciter': 'Alafasy (asr-model-v1 test clip)',
+    'expected': '1:1-1:7',
+    'wav': testClip,
+    'group': 'phone_clip',
+  });
+
   final out = <Map<String, Object?>>[];
   final evals = <(Map<String, dynamic>, ClipEval)>[];
   var ok = 0, expectedTotal = 0, foundTotal = 0, wrongTotal = 0;

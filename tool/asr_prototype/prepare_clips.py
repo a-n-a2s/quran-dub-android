@@ -10,7 +10,8 @@
   "S:A@F0-F1"    جزء من الآية (نسبة من طول ملفها)، مثلاً القارئ بيعيد أول نصها
   "tts:KEY"      كلام عادي مش قرآن (espeak-ng عربي) — مقدمة/دعاء
 degrade: 0 نظيف، 1 محاكاة جوال (نطاق 300-3400Hz + ضجيج خفيف، نفس يوم 3)،
-         2 ضجيج قوي (SNR ~10dB) + نطاق جوال.
+         2 ضجيج قوي (ضجيج أبيض 0.03) + نطاق جوال، 3 ضجيج شديد جداً (0.06،
+         اختبار حدود بس: بأول تجربة يوم 5 الـ VAD ما لقط كلام تقريباً).
 
 الملفات للاختبار بس (ما بتنضاف للمستودع ولا للـ APK).
 usage: python prepare_clips.py OUT_DIR   → يكتب OUT_DIR/clips.json
@@ -58,6 +59,7 @@ CLIPS = [
     # ضجيج قوي
     ('rahman_husary_heavy_noise', 'Husary_128kbps', '55:1-12', '55:1-55:12', 2),
     ('ikhlas_alafasy_heavy_noise', 'Alafasy_128kbps', '112:1-4', '112:1-112:4', 2),
+    ('ikhlas_alafasy_extreme_noise', 'Alafasy_128kbps', '112:1-4', '112:1-112:4', 3),
     # مقدمة ودعاء مش قرآن
     ('intro_mulk_alafasy', 'Alafasy_128kbps', 'tts:intro,67:1-4,tts:dua', '67:1-67:4', 0),
 ]
@@ -149,7 +151,8 @@ def degrade(path, level, out):
     else:
         flt = ('[0:a]aresample=16000,highpass=f=250,lowpass=f=3600,volume=0.6[v];'
                '[v][1:a]amix=inputs=2:duration=first:normalize=0[o]')
-        noise = 'anoisesrc=color=white:amplitude=0.06:sample_rate=16000'
+        amp = 0.03 if level == 2 else 0.06
+        noise = f'anoisesrc=color=white:amplitude={amp}:sample_rate=16000'
     run(['ffmpeg', '-loglevel', 'error', '-y', '-i', path, '-f', 'lavfi', '-i', noise,
          '-filter_complex', flt, '-map', '[o]', '-ac', '1', '-ar', str(SR),
          '-c:a', 'pcm_s16le', out])
@@ -161,7 +164,7 @@ def main():
     os.makedirs(cache, exist_ok=True)
     gap = np.zeros(int(0.15 * SR), dtype=np.float32)  # فاصل صغير بين الملفات
     clips = []
-    for cid, rec, items, expected, level in CLIPS:
+    for n, (cid, rec, items, expected, level) in enumerate(CLIPS):
         try:
             parts, truth, t = [], [], 0.0
             for kind, ref, frac in expand(items):
@@ -190,7 +193,8 @@ def main():
             sf.write(wav, y, SR, subtype='PCM_16')
         clips.append({'id': cid, 'reciter': rec, 'expected': expected,
                       'degraded': level > 0, 'noise_level': level, 'wav': wav,
-                      'items': items, 'truth': truth})
+                      'items': items, 'truth': truth,
+                      'group': 'day3' if n < 11 else 'day5'})
         print(f'{cid}: {t:.1f}s, {len(truth)} items')
     with open(os.path.join(out_dir, 'clips.json'), 'w', encoding='utf-8') as f:
         json.dump(clips, f, ensure_ascii=False, indent=1)

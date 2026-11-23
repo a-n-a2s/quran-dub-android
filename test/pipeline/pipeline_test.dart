@@ -110,6 +110,28 @@ void main() {
     expect(segs.where((s) => s.inferred).length, 1);
   });
 
+  test('one-word segments too short to match alone are put back (55:1, "الله")', () {
+    final rahman = buildRecitationSegments(matcher, text, [
+      seg(0.1, 2.8, 'الرحمن'),
+      seg(4.5, 8, 'علم القران'),
+      seg(9.5, 14, 'خلق الانسن'),
+    ]);
+    expect(pipelineAyahRefs(rahman), ['55:1', '55:2', '55:3'],
+        reason: rahman.map((s) => s.describe()).join('\n'));
+    expect(rahman.first.start, closeTo(0.1, 1e-9));
+    expect(rahman.first.needsReview, isTrue);
+
+    final kursi = buildRecitationSegments(matcher, text, [
+      seg(0.1, 1.5, 'الله'),
+      seg(2.7, 14, 'لا اله الا هو الحي القيوم لا تاخذه سنه ولا نوم له ما في السموت وما في الارض'),
+    ]);
+    expect(kursi.length, 1, reason: kursi.map((s) => s.describe()).join('\n'));
+    expect(kursi.first.ref, '2:255');
+    expect(kursi.first.start, closeTo(0.1, 1e-9));
+    expect(ArabicNormalizer.key(kursi.first.text).startsWith(ArabicNormalizer.key('الله لا اله')),
+        isTrue, reason: kursi.first.text);
+  });
+
   test('istiadha hidden, basmala shown without tafsir before a surah', () {
     final segs = buildRecitationSegments(matcher, text, [
       seg(0, 4, 'اعوذ بالله من الشيطان الرجيم'),
