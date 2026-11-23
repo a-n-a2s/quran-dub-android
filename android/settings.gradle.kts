@@ -19,6 +19,9 @@ pluginManagement {
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "9.3.1" apply false
+    // Built-in Kotlin بيستعمل نسخة KGP اللي على الـ classpath: هيك بنثبّتها 2.4.20
+    // (بدون ما نطبّق plugin الـ Kotlin على التطبيق نفسه).
+    id("org.jetbrains.kotlin.android") version "2.4.20" apply false
 }
 
 include(":app")
