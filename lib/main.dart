@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'data/quran_database.dart';
+import 'matching/quran_matcher_service.dart';
 
 void main() {
   runApp(const QuranDubApp());
@@ -44,10 +45,17 @@ class _HomeScreenState extends State<HomeScreen> {
     final firstAyah = await QuranDatabase.instance.ayahAt(1, 1);
     final ayahCountRow = await db.rawQuery('SELECT COUNT(*) AS c FROM ayahs');
     final ayahCount = ayahCountRow.first['c'] as int;
+    List<String> matchCheck;
+    try {
+      matchCheck = await QuranMatcherService.instance.selfCheck();
+    } catch (e) {
+      matchCheck = ['خطأ: $e'];
+    }
     return _SeedStatus(
       surahCount: surahs.length,
       ayahCount: ayahCount,
       sampleAyah: firstAyah?.textUthmani ?? '',
+      matchCheck: matchCheck,
     );
   }
 
@@ -100,10 +108,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: const TextStyle(fontSize: 22),
                   ),
                   const SizedBox(height: 16),
-                  const Text(
-                    'مطابقة الصوت مع الآيات جايّة بالمراحل الجاية.',
+                  Text(
+                    'فحص محرك المطابقة (يوم 3):\n${status.matchCheck.join('\n')}',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 14, color: Colors.black54),
+                    style: const TextStyle(fontSize: 14, color: Colors.black54),
                   ),
                 ],
               );
@@ -119,10 +127,12 @@ class _SeedStatus {
   final int surahCount;
   final int ayahCount;
   final String sampleAyah;
+  final List<String> matchCheck;
 
   const _SeedStatus({
     required this.surahCount,
     required this.ayahCount,
     required this.sampleAyah,
+    required this.matchCheck,
   });
 }

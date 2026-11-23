@@ -6,6 +6,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../matching/arabic_normalizer.dart';
+import '../matching/quran_matcher.dart';
 import 'models/ayah.dart';
 import 'models/surah.dart';
 
@@ -21,7 +23,9 @@ class QuranDatabase {
   static final QuranDatabase instance = QuranDatabase._internal();
 
   static const String _dbFileName = 'quran.db';
-  static const int _dbVersion = 1;
+  /// v1: يوم 2 (text_uthmani + tafsir_muyassar + معلومات مساعدة).
+  /// v2: يوم 3 — عمود text_simple (نص مبسّط بدون تشكيل، للبحث والمطابقة).
+  static const int _dbVersion = 2;
   static const String _seedAssetPath = 'assets/quran/quran_data.json.gz';
 
   Database? _database;
@@ -45,6 +49,14 @@ class QuranDatabase {
       version: _dbVersion,
       onCreate: (db, version) async {
         await _createSchema(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          // ترقية بدون مسح البيانات الموجودة: نضيف العمود ونعبّيه من
+          // text_uthmani الموجود أصلاً.
+          await db.execute('ALTER TABLE ayahs ADD COLUMN text_simple TEXT');
+          await _backfillSimpleText(db);
+        }
       },
     );
 
@@ -70,6 +82,7 @@ class QuranDatabase {
         surah_number INTEGER NOT NULL,
         ayah_number INTEGER NOT NULL,
         text_uthmani TEXT NOT NULL,
+        text_simple TEXT,
         tafsir_muyassar TEXT NOT NULL,
         juz INTEGER NOT NULL,
         page INTEGER NOT NULL,
@@ -121,6 +134,7 @@ class QuranDatabase {
           'surah_number': a['s'],
           'ayah_number': a['a'],
           'text_uthmani': a['t'],
+          'text_simple': ArabicNormalizer.simple(a['t'] as String),
           'tafsir_muyassar': a['f'],
           'juz': a['j'],
           'page': a['p'],
@@ -130,6 +144,22 @@ class QuranDatabase {
         });
       }
 
+      await batch.commit(noResult: true);
+    });
+  }
+
+  Future<void> _backfillSimpleText(Database db) async {
+    final rows = await db.query('ayahs', columns: ['id', 'text_uthmani']);
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final r in rows) {
+        batch.update(
+          'ayahs',
+          {'text_simple': ArabicNormalizer.simple(r['text_uthmani'] as String)},
+          where: 'id = ?',
+          whereArgs: [r['id']],
+        );
+      }
       await batch.commit(noResult: true);
     });
   }
@@ -181,17 +211,33 @@ class QuranDatabase {
     return Ayah.fromMap(rows.first);
   }
 
-  /// بحث نصّي بسيط (LIKE) بنص الآيات، هيفيدنا لاحقاً بمطابقة نتيجة التعرف
-  /// على الصوت مع أقرب آية.
+  /// بحث نصّي بسيط (LIKE). بيدوّر بالنص المبسّط (بدون تشكيل) عشان
+  /// المستخدم يقدر يكتب "الحمد لله" عادي ويلاقي الآية.
   Future<List<Ayah>> searchAyahText(String query) async {
     final db = await database;
+    final simpleQuery = ArabicNormalizer.simple(query);
     final rows = await db.query(
       'ayahs',
-      where: 'text_uthmani LIKE ?',
-      whereArgs: ['%$query%'],
+      where: 'text_simple LIKE ? OR text_uthmani LIKE ?',
+      whereArgs: ['%$simpleQuery%', '%$query%'],
       limit: 20,
     );
     return rows.map(Ayah.fromMap).toList();
+  }
+
+  /// كل الآيات بالترتيب بالشكل اللي بيحتاجه [QuranMatcher].
+  Future<List<MatchableAyah>> matchableAyahs() async {
+    final db = await database;
+    final rows = await db.query(
+      'ayahs',
+      columns: ['surah_number', 'ayah_number', 'text_uthmani'],
+      orderBy: 'surah_number ASC, ayah_number ASC',
+    );
+    return [
+      for (final r in rows)
+        MatchableAyah(r['surah_number'] as int, r['ayah_number'] as int,
+            r['text_uthmani'] as String),
+    ];
   }
 
   Future<void> close() async {

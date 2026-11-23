@@ -6,6 +6,7 @@ class Ayah {
   final int surahNumber;
   final int ayahNumber;
   final String textUthmani; // نص الآية بالرسم العثماني مع الحركات
+  final String? textSimple; // نص مبسّط بدون تشكيل (يوم 3، للبحث/المطابقة)
   final String tafsirMuyassar; // التفسير الميسر (مجمع الملك فهد)
   final int juz; // رقم الجزء (1-30)
   final int page; // رقم الصفحة بالمصحف المعتمد (مصحف المدينة، طبعة حفص)
@@ -17,6 +18,7 @@ class Ayah {
     required this.surahNumber,
     required this.ayahNumber,
     required this.textUthmani,
+    this.textSimple,
     required this.tafsirMuyassar,
     required this.juz,
     required this.page,
@@ -30,6 +32,7 @@ class Ayah {
       surahNumber: map['surah_number'] as int,
       ayahNumber: map['ayah_number'] as int,
       textUthmani: map['text_uthmani'] as String,
+      textSimple: map['text_simple'] as String?,
       tafsirMuyassar: map['tafsir_muyassar'] as String,
       juz: map['juz'] as int,
       page: map['page'] as int,

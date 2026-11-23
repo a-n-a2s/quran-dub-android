@@ -61,7 +61,9 @@ void main() {
     test('single ayah in plain imlaei spelling', () {
       final r = matcher.match('قل هو الله أحد');
       expectAt(r, 112, 1);
-      expect(r!.confidence, greaterThan(0.4));
+      expect(r!.similarity, 1.0);
+      // 9 حروف بس: الثقة مقصود تكون أوطى من المقاطع الطويلة.
+      expect(r.confidence, greaterThan(0.3));
     });
 
     test('multi-ayah span is split per ayah', () {

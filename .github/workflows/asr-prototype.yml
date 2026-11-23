@@ -32,8 +32,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install sherpa-onnx (Python)
-        run: pip install --quiet sherpa-onnx soundfile numpy huggingface_hub
+      - name: Install sherpa-onnx (Python) + ffmpeg
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install --quiet sherpa-onnx soundfile numpy huggingface_hub
 
       - name: Download ASR model (quran-asr-tiny, int8) + Silero VAD
         run: |
