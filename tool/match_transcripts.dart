@@ -9,6 +9,7 @@ import 'dart:io';
 
 import 'package:quran_dub/matching/quran_corpus_loader.dart';
 import 'package:quran_dub/matching/quran_matcher.dart';
+import 'package:quran_dub/matching/quran_sequence_matcher.dart';
 
 void main(List<String> args) {
   final clips = json.decode(File(args[0]).readAsStringSync()) as List<dynamic>;
@@ -20,12 +21,14 @@ void main(List<String> args) {
   print('matcher ready in ${sw.elapsedMilliseconds}ms '
       '(${matcher.ayahCount} ayahs, ${matcher.corpusLength} letters)\n');
 
+  final seqMatcher = QuranSequenceMatcher(matcher);
   final md = StringBuffer()
     ..writeln('## نتيجة النموذج الأولي: تعرف على الصوت + مطابقة (يوم 3)\n')
-    ..writeln('| المقطع | المتوقع | كامل: النتيجة | الثقة | VAD: آيات صح/متوقع | آيات غلط | RTF |')
-    ..writeln('|---|---|---|---|---|---|---|');
+    ..writeln('| المقطع | المتوقع | كامل: النتيجة | الثقة | VAD+تسلسل: آيات صح/متوقع | آيات غلط | (بدون تسلسل) | RTF |')
+    ..writeln('|---|---|---|---|---|---|---|---|');
 
-  var wholeOk = 0, vadOk = 0, total = 0;
+  var wholeOk = 0, vadOk = 0, greedyOk = 0, total = 0;
+  var greedyFound = 0, greedyWrong = 0;
   var expectedAyahsTotal = 0, foundAyahsTotal = 0, wrongAyahsTotal = 0;
 
   for (final raw in clips) {
@@ -56,21 +59,48 @@ void main(List<String> args) {
         'similarity=${w?.similarity.toStringAsFixed(2)} (${wMs}ms) '
         '${isWholeOk ? "✅" : "❌"}');
 
-    // 2) مقاطع VAD متسلسلة مع السياق + توقيت الآيات
+    final segs = (c['segments'] as List<dynamic>).cast<Map<String, dynamic>>();
+
+    // 2a) للمقارنة: كل مقطع لحاله (greedy) مع previousEnd بس.
+    {
+      final gFound = <String>{}, gWrong = <String>{};
+      int? prevEnd;
+      for (final s in segs) {
+        final r = matcher.match(s['text'] as String, previousEnd: prevEnd);
+        if (r == null) continue;
+        if (r.ayahs.isNotEmpty && r.confidence >= 0.3) prevEnd = r.corpusEnd;
+        if (r.confidence < 0.3) continue;
+        for (final a in r.ayahs) {
+          final inRange =
+              a.surah == exp.$1 && a.ayah >= exp.$2 && a.ayah <= exp.$3;
+          (inRange ? gFound : gWrong).add('${a.surah}:${a.ayah}');
+        }
+        if (r.ayahs.isEmpty && r.alternatives.any((x) => x.surah == 1 && x.ayah == 1)) {
+          if (exp.$1 == 1 && exp.$2 == 1) gFound.add('1:1');
+        }
+      }
+      greedyFound += gFound.length;
+      greedyWrong += gWrong.length;
+      if (gFound.length == exp.$3 - exp.$2 + 1 && gWrong.isEmpty) greedyOk++;
+      c['_greedy'] = '${gFound.length}/${exp.$3 - exp.$2 + 1}, wrong ${gWrong.length}';
+    }
+
+    // 2b) مقاطع VAD مع مطابقة التسلسل (Viterbi) + توقيت الآيات
     final found = <String>{};
     final wrong = <String>{};
-    int? prevEnd;
-    for (final sraw in (c['segments'] as List<dynamic>)) {
-      final s = sraw as Map<String, dynamic>;
+    final seqSw = Stopwatch()..start();
+    final seqResults = seqMatcher.matchAll([for (final s in segs) s['text'] as String]);
+    final seqMs = seqSw.elapsedMilliseconds;
+    for (var si = 0; si < segs.length; si++) {
+      final s = segs[si];
       final text = s['text'] as String;
       final times = (s['char_times'] as List<dynamic>).cast<num>();
-      final r = matcher.match(text, previousEnd: prevEnd);
+      final r = seqResults[si];
       final head = '  [${s['start']}s–${s['end']}s] ';
       if (r == null) {
         print('$head(no match) "$text"');
         continue;
       }
-      if (r.ayahs.isNotEmpty && r.confidence >= 0.3) prevEnd = r.corpusEnd;
       final pre = r.preambles.map((p) => p.type.name).join('+');
       final parts = <String>[];
       for (final a in r.ayahs) {
@@ -102,18 +132,20 @@ void main(List<String> args) {
     wrongAyahsTotal += wrong.length;
     final isVadOk = found.length == expCount && wrong.isEmpty;
     if (isVadOk) vadOk++;
-    print('  VAD → found ${found.length}/$expCount ayahs, wrong=${wrong.toList()} '
-        '${isVadOk ? "✅" : "❌"}\n');
+    print('  VAD+sequence → found ${found.length}/$expCount ayahs, wrong=${wrong.toList()} '
+        '${isVadOk ? "✅" : "❌"} (${seqMs}ms for ${segs.length} segments; '
+        'greedy was ${c['_greedy']})\n');
 
     md.writeln('| ${c['id']} | ${c['expected']} | $wGot ${isWholeOk ? "✅" : "❌"} '
         '| ${w?.confidence.toStringAsFixed(2) ?? "-"} '
         '| ${found.length}/$expCount ${isVadOk ? "✅" : "❌"} | ${wrong.length} '
-        '| ${c['rtf_vad']} |');
+        '| ${c['_greedy']} | ${c['rtf_vad']} |');
   }
 
-  final line = 'SUMMARY: whole-clip exact $wholeOk/$total, '
-      'VAD-segmented exact $vadOk/$total, '
-      'ayah recall $foundAyahsTotal/$expectedAyahsTotal, wrong ayahs $wrongAyahsTotal';
+  final line = 'SUMMARY: whole-clip exact $wholeOk/$total | '
+      'VAD+sequence exact $vadOk/$total, ayah recall $foundAyahsTotal/$expectedAyahsTotal, '
+      'wrong ayahs $wrongAyahsTotal | (greedy per-segment: exact $greedyOk/$total, '
+      'recall $greedyFound/$expectedAyahsTotal, wrong $greedyWrong)';
   print(line);
   md
     ..writeln()
@@ -121,7 +153,7 @@ void main(List<String> args) {
   if (summaryPath != null) File(summaryPath).writeAsStringSync(md.toString());
 
   // بوابة النموذج الأولي: نفشل لو الدقة واطية بشكل واضح.
-  if (total == 0 || wholeOk / total < 0.6) exitCode = 1;
+  if (total == 0 || foundAyahsTotal / expectedAyahsTotal < 0.8) exitCode = 1;
 }
 
 (int, int, int) _parseRange(String r) {

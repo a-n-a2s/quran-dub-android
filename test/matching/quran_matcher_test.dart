@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:quran_dub/matching/arabic_normalizer.dart';
 import 'package:quran_dub/matching/quran_corpus_loader.dart';
 import 'package:quran_dub/matching/quran_matcher.dart';
+import 'package:quran_dub/matching/quran_sequence_matcher.dart';
 
 void main() {
   late List<MatchableAyah> ayahs;
@@ -114,6 +115,44 @@ void main() {
       expect(matcher.match('من'), isNull);
       final r = matcher.match('السلام عليكم ورحمة الله وبركاته كيف حالكم اليوم');
       expect(r == null || r.confidence < 0.6, isTrue, reason: '$r');
+    });
+
+    test('sequence: short ambiguous segments resolved by neighbours', () {
+      final seq = QuranSequenceMatcher(matcher);
+      String at(QuranMatch? r) =>
+          r?.first == null ? '-' : '${r!.first!.surah}:${r.first!.ayah}';
+
+      // آية الكرسي مقطّعة: أول مقطع لحاله ممكن يكون 3:2.
+      final kursi = seq.matchAll([
+        'الله لا اله الا هو الحي القيوم',
+        'لا تاخذه سنه ولا نوم له ما في السموت وما في الارض',
+        'من ذا الذي يشفع عنده الا باذنه',
+      ]);
+      expect(kursi.map(at).toList(), ['2:255', '2:255', '2:255']);
+
+      // الفاتحة: بسملة لحالها، وبعدها مقاطع قصيرة موجودة بأماكن ثانية.
+      final fatiha = seq.matchAll([
+        'بسم الله الرحمن الرحيم',
+        'الحمد لله رب العلمين',
+        'الرحمن الرحيم',
+        'ملك يوم الدين',
+        'اياك نعبد واياك نستعين',
+      ]);
+      expect(fatiha.map(at).toList(), ['1:1', '1:2', '1:3', '1:4', '1:5']);
+
+      // الرحمن: اللازمة المكررة بتنحسم من الآية اللي بعدها.
+      final rahman = seq.matchAll([
+        'فباي الاء ربكما تكذبان',
+        'خلق الانسن من صلصل كالفخار',
+        'وخلق الجان من مارج من نار',
+        'فباي الاء ربكما تكذبان',
+      ]);
+      expect(rahman.map(at).toList(), ['55:13', '55:14', '55:15', '55:16']);
+
+      // مقطع ضجيج بالنص ما بيكسر السلسلة.
+      final noisy = seq.matchAll(['قل هو الله احد', 'ل', 'الله الصمد', 'لم يلد ولم يولد']);
+      expect(noisy.map(at).toList(), ['112:1', '-', '112:2', '112:3']);
+      expect(noisy[2]!.confidence, greaterThan(0.5));
     });
 
     test('random noisy segments (simulated ASR, ~10% char errors)', () {
