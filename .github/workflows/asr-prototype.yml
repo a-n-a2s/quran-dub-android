@@ -12,6 +12,7 @@ on:
     paths:
       - "lib/matching/**"
       - "lib/asr/**"
+      - "lib/pipeline/**"
       - "tool/**"
       - ".github/workflows/asr-prototype.yml"
 
@@ -33,9 +34,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install sherpa-onnx (Python) + ffmpeg
+      - name: Install sherpa-onnx (Python) + ffmpeg + espeak-ng
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg espeak-ng
           pip install --quiet sherpa-onnx soundfile numpy huggingface_hub
 
       - name: Download ASR model (quran-asr-tiny, int8) + Silero VAD
@@ -54,8 +55,10 @@ jobs:
           echo "--- tokens.txt ---"; cat build/asr/model/tokens.txt
           (cd build/asr/model && sha256sum model.int8.onnx tokens.txt silero_vad.onnx > SHA256SUMS && cat SHA256SUMS)
 
-      - name: Download test recitations (everyayah.com) → 16kHz WAV
-        run: bash tool/asr_prototype/prepare_clips.sh build/asr/clips
+      # يوم 5: 19 مقطع (11 تبع يوم 3 + طويلة + إعادة جزء + ضجيج قوي + مقدمة
+      # ودعاء مش قرآن)، مع حقيقة التوقيت لكل آية (من ملفات everyayah).
+      - name: Download test recitations (everyayah.com) → 16kHz WAV + timing truth
+        run: python tool/asr_prototype/prepare_clips.py build/asr/clips
 
       - name: Run ASR (whole clip + VAD segments)
         run: |
@@ -81,7 +84,8 @@ jobs:
       - name: App engine (Dart sherpa_onnx) on the same clips
         run: |
           dart run tool/asr_engine_cli.dart build/asr/clips/clips.json \
-            build/asr/dart_transcripts.json build/asr/app_model
+            build/asr/dart_transcripts.json build/asr/app_model build/asr/dart_pipeline.md
+          cat build/asr/dart_pipeline.md >> "$GITHUB_STEP_SUMMARY"
           echo "## محرك التطبيق (Dart) على نفس المقاطع" >> "$GITHUB_STEP_SUMMARY"
           dart run tool/match_transcripts.dart build/asr/dart_transcripts.json build/asr/dart_summary.md
           cat build/asr/dart_summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -96,6 +100,7 @@ jobs:
             build/asr/summary.md
             build/asr/dart_transcripts.json
             build/asr/dart_summary.md
+            build/asr/dart_pipeline.md
             build/asr/clips/clips.json
           retention-days: 30
 

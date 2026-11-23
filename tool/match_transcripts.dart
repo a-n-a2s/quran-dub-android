@@ -7,9 +7,14 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:quran_dub/asr/asr_engine.dart';
 import 'package:quran_dub/matching/quran_corpus_loader.dart';
 import 'package:quran_dub/matching/quran_matcher.dart';
 import 'package:quran_dub/matching/quran_sequence_matcher.dart';
+import 'package:quran_dub/pipeline/quran_text_source.dart';
+import 'package:quran_dub/pipeline/segment_builder.dart';
+
+import 'pipeline_eval.dart';
 
 void main(List<String> args) {
   final clips = json.decode(File(args[0]).readAsStringSync()) as List<dynamic>;
@@ -22,6 +27,8 @@ void main(List<String> args) {
       '(${matcher.ayahCount} ayahs, ${matcher.corpusLength} letters)\n');
 
   final seqMatcher = QuranSequenceMatcher(matcher);
+  final text = QuranTextSource.fromSeedFile('assets/quran/quran_data.json.gz');
+  final evals = <(Map<String, dynamic>, ClipEval)>[];
   final md = StringBuffer()
     ..writeln('## نتيجة النموذج الأولي: تعرف على الصوت + مطابقة (يوم 3)\n')
     ..writeln('| المقطع | المتوقع | كامل: النتيجة | الثقة | VAD+تسلسل: آيات صح/متوقع | آيات غلط | (بدون تسلسل) | RTF |')
@@ -136,6 +143,26 @@ void main(List<String> args) {
         '${isVadOk ? "✅" : "❌"} (${seqMs}ms for ${segs.length} segments; '
         'greedy was ${c['_greedy']})\n');
 
+    // 3) يوم 5: خط الأنابيب كامل (نفس كود التطبيق) على نفس المقاطع.
+    final asrSegs = [
+      for (final s in segs)
+        AsrSegment(
+          start: (s['start'] as num).toDouble(),
+          end: (s['end'] as num).toDouble(),
+          text: s['text'] as String,
+          charTimes: [for (final x in s['char_times'] as List<dynamic>) (x as num).toDouble()],
+          tokens: const [],
+          timestamps: const [],
+        ),
+    ];
+    final pipe = buildRecitationSegments(matcher, text, asrSegs);
+    final pe = evaluateClip(c, pipe);
+    evals.add((c, pe));
+    print('  PIPELINE → ${pe.good}/${pe.expected.length} ${pe.exact ? "✅" : "❌"}'
+        '${pe.wrong.isEmpty ? "" : " wrong=${pe.wrong}"}'
+        '${pe.inferred.isEmpty ? "" : " inferred=${pe.inferred}"}'
+        '${pe.nonQuranHits.isEmpty ? "" : " over-non-quran=${pe.nonQuranHits}"}\n');
+
     md.writeln('| ${c['id']} | ${c['expected']} | $wGot ${isWholeOk ? "✅" : "❌"} '
         '| ${w?.confidence.toStringAsFixed(2) ?? "-"} '
         '| ${found.length}/$expCount ${isVadOk ? "✅" : "❌"} | ${wrong.length} '
@@ -150,6 +177,11 @@ void main(List<String> args) {
   md
     ..writeln()
     ..writeln('**$line**');
+  final pipeMd = evalMarkdown('خط الأنابيب كامل على نفس النواتج (يوم 5)', evals);
+  print('\n$pipeMd');
+  md
+    ..writeln()
+    ..writeln(pipeMd);
   if (summaryPath != null) File(summaryPath).writeAsStringSync(md.toString());
 
   // بوابة النموذج الأولي: نفشل لو الدقة واطية بشكل واضح.

@@ -32,6 +32,7 @@ Future<void> downloadFile(
   DownloadProgress? onProgress,
   int maxAttempts = 4,
   Duration timeout = const Duration(seconds: 30),
+  void Function(int verifyMs)? onVerified,
 }) async {
   await dest.parent.create(recursive: true);
   final part = File('${dest.path}.part');
@@ -40,7 +41,9 @@ Future<void> downloadFile(
     try {
       await _downloadOnce(url, part, onProgress, timeout);
       if (expectedSha256 != null) {
+        final vs = Stopwatch()..start();
         final got = await sha256OfFile(part);
+        onVerified?.call(vs.elapsedMilliseconds);
         if (got != expectedSha256.toLowerCase()) {
           await part.delete();
           throw DownloadException(

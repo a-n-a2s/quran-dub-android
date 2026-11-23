@@ -39,8 +39,15 @@ class AyahSpan {
   final int queryStart;
   final int queryEnd;
 
+  /// الجزء المسموع من الآية نفسها، بمفتاح الآية المطبّع [keyStart, keyEnd)
+  /// (0 = أول حرف بالآية). keyEnd = -1 يعني لآخر الآية. (يوم 5: لتقطيع النص
+  /// العثماني على حدود الكلمات لكل جزء.)
+  final int keyStart;
+  final int keyEnd;
+
   const AyahSpan(this.surah, this.ayah, this.coverage, this.queryStart,
-      this.queryEnd);
+      this.queryEnd,
+      {this.keyStart = 0, this.keyEnd = -1});
 
   @override
   String toString() =>
@@ -725,15 +732,24 @@ class QuranMatcher {
       if (e > s) {
         final len = aEnd - aStart;
         var matchedCount = 0;
+        var first = -1, last = -1;
         for (var p = s; p < e; p++) {
-          matchedCount += matched[p - start];
+          if (matched[p - start] == 1) {
+            matchedCount++;
+            if (first < 0) first = p;
+            last = p;
+          }
         }
+        // الأطراف من أول/آخر حرف انطابق فعلاً (مش من فجوة بالأطراف).
+        final fs = first < 0 ? s : first, ls = last < 0 ? e - 1 : last;
         spans.add(AyahSpan(
           _surah[ai],
           _ayah[ai],
           len == 0 ? 1 : matchedCount / len,
-          queryOffset + qAt[s - start],
-          queryOffset + qAt[e - 1 - start] + 1,
+          queryOffset + qAt[fs - start],
+          queryOffset + qAt[ls - start] + 1,
+          keyStart: fs - aStart,
+          keyEnd: ls + 1 - aStart,
         ));
       }
       ai++;

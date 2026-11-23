@@ -34,6 +34,24 @@ class ModelDownloadProgress {
       '${(total / 1e6).toStringAsFixed(1)}MB';
 }
 
+/// أوقات تجهيز النموذج (يوم 5)، عشان شاشة أول استخدام تحكي شو عم بيصير.
+class ModelSetupReport {
+  /// كان جاهز (ملف .verified + الأحجام)، بدون تحميل ولا hashing.
+  bool alreadyReady = false;
+  int checkMs = 0; // فحص isReady
+  int sumsMs = 0; // تحميل SHA256SUMS
+  int downloadMs = 0; // تحميل الملفات (بدون التحقق)
+  int verifyMs = 0; // SHA256 لكل الملفات
+  int downloadedBytes = 0;
+  int get totalMs => checkMs + sumsMs + downloadMs + verifyMs;
+  @override
+  String toString() => alreadyReady
+      ? 'جاهز (فحص ${checkMs}ms)'
+      : 'فحص ${checkMs}ms + SHA256SUMS ${sumsMs}ms + تحميل '
+          '${(downloadedBytes / 1e6).toStringAsFixed(1)}MB ${downloadMs}ms + '
+          'تحقق SHA256 ${verifyMs}ms';
+}
+
 /// مدير ملفات المحرك (يوم 4): بينزّل ملفات الـ Release `asr-model-v1`
 /// **مرة وحدة** لمجلد التطبيق، وبيتحقق من SHA256 حسب ملف `SHA256SUMS`
 /// (ومن نسخة مثبّتة بالكود كمان، عشان ما حدا يقدر يبدّل الملفات بالـ
@@ -89,14 +107,27 @@ class AsrModelManager {
   }
 
   /// بيرجع المسارات، وبينزّل اللي ناقص/خربان أول مرة بس.
+  /// أوقات آخر [ensureReady].
+  ModelSetupReport lastReport = ModelSetupReport();
+
   Future<AsrModelPaths> ensureReady(
       {void Function(ModelDownloadProgress)? onProgress}) async {
-    if (await isReady()) return paths;
+    final report = lastReport = ModelSetupReport();
+    final sw = Stopwatch()..start();
+    if (await isReady()) {
+      report
+        ..alreadyReady = true
+        ..checkMs = sw.elapsedMilliseconds;
+      return paths;
+    }
+    report.checkMs = sw.elapsedMilliseconds;
     await dir.create(recursive: true);
 
     // 1) SHA256SUMS من الـ Release، ولازم يطابق النسخة المثبّتة بالكود.
     final sumsFile = _file('SHA256SUMS');
+    sw.reset();
     await downloadFile(Uri.parse('${releaseBase}SHA256SUMS'), sumsFile);
+    report.sumsMs = sw.elapsedMilliseconds;
     final sums = parseSha256Sums(await sumsFile.readAsString());
     for (final f in files) {
       if (sums[f.name] != f.sha256) {
@@ -111,18 +142,27 @@ class AsrModelManager {
     for (var i = 0; i < files.length; i++) {
       final f = files[i];
       final file = _file(f.name);
-      final ok = await file.exists() &&
-          await file.length() == f.bytes &&
-          await sha256OfFile(file) == f.sha256;
+      var ok = await file.exists() && await file.length() == f.bytes;
+      if (ok) {
+        sw.reset();
+        ok = await sha256OfFile(file) == f.sha256;
+        report.verifyMs += sw.elapsedMilliseconds;
+      }
       if (!ok) {
         final base = done;
+        var verify = 0;
+        sw.reset();
         await downloadFile(
           Uri.parse('$releaseBase${f.name}'),
           file,
           expectedSha256: sums[f.name],
+          onVerified: (ms) => verify += ms,
           onProgress: (r, _) => onProgress?.call(
               ModelDownloadProgress(f.name, i + 1, files.length, base + r, total)),
         );
+        report.downloadMs += sw.elapsedMilliseconds - verify;
+        report.verifyMs += verify;
+        report.downloadedBytes += f.bytes;
       }
       done += f.bytes;
       onProgress?.call(

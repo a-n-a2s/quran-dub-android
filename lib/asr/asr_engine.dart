@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
@@ -121,6 +122,8 @@ class AsrEngine {
           {AsrEngineConfig config = const AsrEngineConfig()}) =>
       Isolate.run(() => transcribeWavFileSync(paths, wavPath, config: config));
 
+  /// مرة وحدة (بيبني المحرك ويحرره). للجلسات الطويلة استعمل
+  /// [AsrRecognizer] (sync) أو [AsrSession] (isolate عايش طول الجلسة).
   static AsrTranscript transcribeSamplesSync(
     AsrModelPaths paths,
     Float32List samples, {
@@ -128,69 +131,13 @@ class AsrEngine {
     int loadAudioMs = 0,
     int sourceSampleRate = sampleRate,
   }) {
-    ensureBindings();
-    final sw = Stopwatch()..start();
-    final recognizer = so.OfflineRecognizer(so.OfflineRecognizerConfig(
-      model: so.OfflineModelConfig(
-        zipformerCtc: so.OfflineZipformerCtcModelConfig(model: paths.model),
-        tokens: paths.tokens,
-        numThreads: config.numThreads,
-        debug: false,
-      ),
-    ));
-    final vadConfig = so.VadModelConfig(
-      sileroVad: so.SileroVadModelConfig(
-        model: paths.vad,
-        minSilenceDuration: config.minSilence,
-        minSpeechDuration: config.minSpeech,
-        maxSpeechDuration: config.maxSpeech,
-      ),
-      sampleRate: sampleRate,
-      numThreads: 1,
-      debug: false,
-    );
-    final vad = so.VoiceActivityDetector(
-        config: vadConfig,
-        bufferSizeInSeconds: config.maxSpeech.ceil() + 35);
-    final initMs = sw.elapsedMilliseconds;
-
-    sw.reset();
-    final segments = <AsrSegment>[];
-    void drain() {
-      while (!vad.isEmpty()) {
-        final seg = vad.front();
-        vad.pop();
-        segments.add(_decode(recognizer, seg.samples, seg.start / sampleRate));
-      }
-    }
-
+    final rec = AsrRecognizer(paths, config: config);
     try {
-      final window = vadConfig.sileroVad.windowSize;
-      for (var i = 0; i + window <= samples.length; i += window) {
-        vad.acceptWaveform(Float32List.sublistView(samples, i, i + window));
-        drain();
-      }
-      final tail = samples.length % window;
-      if (tail > 0) {
-        final pad = Float32List(window)
-          ..setRange(0, tail, samples, samples.length - tail);
-        vad.acceptWaveform(pad);
-      }
-      vad.flush();
-      drain();
+      return rec.transcribeSamples(samples,
+          loadAudioMs: loadAudioMs, sourceSampleRate: sourceSampleRate);
     } finally {
-      vad.free();
-      recognizer.free();
+      rec.free();
     }
-    return AsrTranscript(
-      segments: segments,
-      audioSeconds: samples.length / sampleRate,
-      sourceSampleRate: sourceSampleRate,
-      numThreads: config.numThreads,
-      loadAudioMs: loadAudioMs,
-      initMs: initMs,
-      recognizeMs: sw.elapsedMilliseconds,
-    );
   }
 
   static AsrSegment _decode(
@@ -213,6 +160,199 @@ class AsrEngine {
       stream.free();
     }
   }
+}
+
+/// محرك التعرف **عايش** (يوم 5): النموذج بيتحمّل مرة وحدة (~0.5 ثانية على
+/// الجوال) وبيضل بالذاكرة لكل الملفات بعدها. الـ VAD بينبني جديد لكل ملف
+/// (حالته مربوطة بالملف، وبناؤه بأجزاء من الثانية). مش thread-safe: استعمله
+/// من isolate واحد ([AsrSession] بيعمل هيك).
+class AsrRecognizer {
+  final AsrModelPaths paths;
+  final AsrEngineConfig config;
+  late final so.OfflineRecognizer _recognizer;
+  late final so.VadModelConfig _vadConfig;
+
+  /// وقت تحميل النموذج (مرة وحدة).
+  late final int initMs;
+  int _uses = 0;
+  bool _freed = false;
+
+  AsrRecognizer(this.paths, {this.config = const AsrEngineConfig()}) {
+    AsrEngine.ensureBindings();
+    final sw = Stopwatch()..start();
+    _recognizer = so.OfflineRecognizer(so.OfflineRecognizerConfig(
+      model: so.OfflineModelConfig(
+        zipformerCtc: so.OfflineZipformerCtcModelConfig(model: paths.model),
+        tokens: paths.tokens,
+        numThreads: config.numThreads,
+        debug: false,
+      ),
+    ));
+    _vadConfig = so.VadModelConfig(
+      sileroVad: so.SileroVadModelConfig(
+        model: paths.vad,
+        minSilenceDuration: config.minSilence,
+        minSpeechDuration: config.minSpeech,
+        maxSpeechDuration: config.maxSpeech,
+      ),
+      sampleRate: AsrEngine.sampleRate,
+      numThreads: 1,
+      debug: false,
+    );
+    initMs = sw.elapsedMilliseconds;
+  }
+
+  AsrTranscript transcribeWavFile(String wavPath) {
+    final sw = Stopwatch()..start();
+    final raw = WavAudio.decode(File(wavPath).readAsBytesSync());
+    final audio = WavAudio.toRate(raw, AsrEngine.sampleRate);
+    return transcribeSamples(audio.samples,
+        loadAudioMs: sw.elapsedMilliseconds, sourceSampleRate: raw.sampleRate);
+  }
+
+  AsrTranscript transcribeSamples(Float32List samples,
+      {int loadAudioMs = 0, int sourceSampleRate = AsrEngine.sampleRate}) {
+    if (_freed) throw StateError('AsrRecognizer freed');
+    const sampleRate = AsrEngine.sampleRate;
+    // أول استعمال بيحسب وقت تحميل النموذج، الباقي 0 (المحرك جاهز).
+    final init = _uses++ == 0 ? initMs : 0;
+    final sw = Stopwatch()..start();
+    final vad = so.VoiceActivityDetector(
+        config: _vadConfig, bufferSizeInSeconds: config.maxSpeech.ceil() + 35);
+    final segments = <AsrSegment>[];
+    void drain() {
+      while (!vad.isEmpty()) {
+        final seg = vad.front();
+        vad.pop();
+        segments.add(
+            AsrEngine._decode(_recognizer, seg.samples, seg.start / sampleRate));
+      }
+    }
+
+    try {
+      final window = _vadConfig.sileroVad.windowSize;
+      for (var i = 0; i + window <= samples.length; i += window) {
+        vad.acceptWaveform(Float32List.sublistView(samples, i, i + window));
+        drain();
+      }
+      final tail = samples.length % window;
+      if (tail > 0) {
+        final pad = Float32List(window)
+          ..setRange(0, tail, samples, samples.length - tail);
+        vad.acceptWaveform(pad);
+      }
+      vad.flush();
+      drain();
+    } finally {
+      vad.free();
+    }
+    return AsrTranscript(
+      segments: segments,
+      audioSeconds: samples.length / sampleRate,
+      sourceSampleRate: sourceSampleRate,
+      numThreads: config.numThreads,
+      loadAudioMs: loadAudioMs,
+      initMs: init,
+      recognizeMs: sw.elapsedMilliseconds,
+    );
+  }
+
+  void free() {
+    if (_freed) return;
+    _freed = true;
+    _recognizer.free();
+  }
+}
+
+/// isolate واحد عايش طول الجلسة فيه [AsrRecognizer] (يوم 5): ما بيعلّق
+/// الواجهة، والنموذج ما بينبني من جديد بكل ملف. لو تغيّر عدد الخيوط بيبني
+/// المحرك من جديد جوا نفس الـ isolate.
+class AsrSession {
+  AsrSession._(this._isolate, this._send, this._responses);
+
+  final Isolate _isolate;
+  final SendPort _send;
+  final Stream<dynamic> _responses;
+  int _nextId = 0;
+  Future<void> _queue = Future.value();
+
+  static AsrSession? _shared;
+
+  /// نسخة وحيدة للتطبيق كله.
+  static Future<AsrSession> shared() async => _shared ??= await start();
+
+  static Future<AsrSession> start() async {
+    final rx = ReceivePort();
+    final isolate = await Isolate.spawn(_asrWorkerMain, rx.sendPort,
+        debugName: 'asr-session');
+    final responses = rx.asBroadcastStream();
+    final send = await responses.first as SendPort;
+    return AsrSession._(isolate, send, responses);
+  }
+
+  /// طلب واحد بكل مرة (بالترتيب).
+  Future<AsrTranscript> transcribeWavFile(AsrModelPaths paths, String wavPath,
+      {AsrEngineConfig config = const AsrEngineConfig()}) {
+    final c = Completer<AsrTranscript>();
+    _queue = _queue.then((_) async {
+      final id = _nextId++;
+      final reply = _responses.firstWhere((m) => m is List && m[0] == id);
+      _send.send([id, paths.model, paths.tokens, paths.vad, wavPath,
+        config.numThreads, config.minSilence, config.minSpeech, config.maxSpeech]);
+      try {
+        final m = await reply as List;
+        if (m[1] is AsrTranscript) {
+          c.complete(m[1] as AsrTranscript);
+        } else {
+          c.completeError(StateError('ASR: ${m[1]}'));
+        }
+      } catch (e, st) {
+        if (!c.isCompleted) c.completeError(e, st);
+      }
+    });
+    return c.future;
+  }
+
+  void dispose() {
+    _send.send(null);
+    _isolate.kill(priority: Isolate.beforeNextEvent);
+    if (identical(_shared, this)) _shared = null;
+  }
+}
+
+void _asrWorkerMain(SendPort main) {
+  final rx = ReceivePort();
+  main.send(rx.sendPort);
+  AsrRecognizer? rec;
+  String? key;
+  rx.listen((dynamic msg) {
+    if (msg == null) {
+      rec?.free();
+      rx.close();
+      return;
+    }
+    final m = msg as List;
+    final id = m[0] as int;
+    try {
+      final paths = AsrModelPaths(
+          model: m[1] as String, tokens: m[2] as String, vad: m[3] as String);
+      final config = AsrEngineConfig(
+          numThreads: m[5] as int,
+          minSilence: m[6] as double,
+          minSpeech: m[7] as double,
+          maxSpeech: m[8] as double);
+      final k = '${paths.model}|${config.numThreads}|${config.minSilence}|'
+          '${config.minSpeech}|${config.maxSpeech}';
+      if (rec == null || key != k) {
+        rec?.free();
+        rec = AsrRecognizer(paths, config: config);
+        key = k;
+      }
+      main.send([id, rec!.transcribeWavFile(m[4] as String)]);
+    } catch (e) {
+      main.send([id, '$e']);
+    }
+  });
 }
 
 /// نص + توقيت لكل حرف (كل token بهالنموذج = حرف أو فاصل كلمة "▁").
