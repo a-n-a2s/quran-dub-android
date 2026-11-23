@@ -59,6 +59,27 @@ SQLite محلية مرة واحدة فقط أول ما يفتح التطبيق. 
   (`asr-prototype.yml`)، و`flutter test test/asr`.
 - **APK التجريبي**: arm64-v8a + armeabi-v7a بس، والمكتبات native مضغوطة.
 
+## خط الأنابيب كامل (يوم 5)
+
+- `lib/pipeline/recitation_pipeline.dart`: أي ملف صوت أو فيديو →
+  `NativeAudioDecoder.ensureWav` → `AsrSession` → `QuranSequenceMatcher` →
+  قائمة `RecitationSegment` بتوقيتها.
+- `AsrRecognizer` / `AsrSession` (`lib/asr/asr_engine.dart`): المحرك بيتحمّل
+  **مرة وحدة** وبيضل عايش بـ isolate واحد طول الجلسة.
+- كل مقطع: البداية والنهاية، النوع (آية كاملة / جزء / بسملة / استعاذة مخفية /
+  مش قرآن)، السورة والآية، الجزء من كم، النص العثماني مقطوع على حدود
+  الكلمات، رقم الآية مع آخر جزء بس، التفسير (مقسوم على الجمل/الفواصل أو كامل
+  تحت كل جزء: `TafsirMode`)، الثقة، و"بده مراجعة".
+- آية أسقطها التعرف بين آيتين انطابقوا بتنكتب "مستنتجة" (بده مراجعة)، وكلمة
+  وحدة لحالها (زي 55:1 "الرحمن") بترجع لآيتها.
+- المحاذاة صارت affine gap (`QuranMatcher._semiGlobal/_spans` و
+  `tool/proto/matcher.py`، تحقّق: `python3 tool/proto/validate_affine.py`).
+- **زر التجربة**: مقطع الفاتحة أو أي ملف من الجوال (اختيار ملف بالـ Kotlin،
+  بدون مكتبة)، مع وقت كل خطوة ومقارنة خيطين/4 خيوط.
+- **بالـ CI**: `tool/asr_prototype/prepare_clips.py` (20 مقطع مع حقيقة توقيت
+  كل آية) + `tool/pipeline_eval.dart` (الدقة وخطأ البداية/النهاية) +
+  `flutter test test/pipeline`.
+
 ## الحالة الحالية
 
 شوف `claude/quran-dub-app-plan.md` بمشروع كلود "تطبيق القران" للخطة
