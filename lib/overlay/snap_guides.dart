@@ -78,8 +78,10 @@ SnapResult snapRect(
   void collect(GuideAxis axis, List<double> mine, List<(double, GuideKind)> targets) {
     for (final t in targets) {
       if (mine.any((m) => (m - t.$1).abs() <= eps)) {
-        final g = SnapGuide(axis, t.$1, t.$2);
-        if (!guides.contains(g)) guides.add(g);
+        // نفس المكان مرتين (مركز + محاذاة): خط واحد، والمركز أولى.
+        if (!guides.any((x) => x.axis == axis && (x.position - t.$1).abs() < 0.01)) {
+          guides.add(SnapGuide(axis, t.$1, t.$2));
+        }
       }
     }
   }
