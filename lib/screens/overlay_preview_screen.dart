@@ -11,10 +11,12 @@ import '../overlay/overlay_timeline.dart';
 import '../overlay/playback_clock.dart';
 import '../pipeline/project_input.dart';
 import '../pipeline/recitation_segment.dart';
+import '../platform/video_info.dart';
 
 /// معاينة الفيديو مع النص المتزامن (يوم 7). الفيديو (أو الفيديو + ملف تلاوة
 /// منفصل) بيشتغل، والنص بيتبدّل حسب توقيت كل مقطع بنفس المقاسات اللي رح
-/// يتصدّر فيها (يوم 8). فيها تبديل نمط التفسير وخط الآية. مش التصميم النهائي
+/// يتصدّر فيها (يوم 8). فيها تبديل نمط التفسير وخط الآية ولون النص (أبيض أو
+/// أسود، وبيتختار تلقائياً حسب سطوع الفيديو تحت النص). مش التصميم النهائي
 /// (الهوية الخضراء/الذهبية بأيام الواجهات).
 class OverlayPreviewScreen extends StatefulWidget {
   final ProjectInput input;
@@ -48,6 +50,13 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
   late OverlayTimeline _timeline;
   late TafsirMode _tafsirMode;
   AyahFont _font = AyahFont.defaultFont;
+  OverlayTextColor _color = OverlayTextColor.defaultColor;
+
+  /// اللون اختاره المستخدم بإيده → ما بنغيّره تلقائياً.
+  bool _colorTouched = false;
+
+  /// ملاحظة قصيرة لما اللون انختار تلقائياً.
+  String? _colorNote;
   String? _error;
   bool _ready = false;
 
@@ -64,6 +73,21 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
       _time.value = _clock.now(_wallSeconds);
     })..start();
     _init();
+    _autoPickColor();
+  }
+
+  /// لون النص الأوضح حسب سطوع الفيديو بمنطقة النص (أسود فوق خلفية فاتحة).
+  Future<void> _autoPickColor() async {
+    final b = await VideoInfoReader.textBandBrightness(
+        widget.input.videoInfo, widget.input.videoPath);
+    if (b == null || !mounted || _colorTouched) return;
+    final pick = OverlayTextColor.forBackground(b.luma, b.brightFraction);
+    setState(() {
+      _color = pick;
+      _colorNote = pick == OverlayTextColor.black
+          ? 'الخلفية فاتحة، فاخترنا نص أسود (بتقدر تغيّره).'
+          : null;
+    });
   }
 
   Future<void> _init() async {
@@ -179,6 +203,7 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
                         cue: _timeline.cueAt(t),
                         tafsirMode: _tafsirMode,
                         font: _font,
+                        color: _color,
                       ),
                     ),
                   ],
@@ -197,6 +222,13 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
           onTafsirMode: (m) => setState(() => _tafsirMode = m),
           font: _font,
           onFont: (f) => setState(() => _font = f),
+          color: _color,
+          colorNote: _colorNote,
+          onColor: (c) => setState(() {
+            _color = c;
+            _colorTouched = true;
+            _colorNote = null;
+          }),
           usingExternalAudio: _audio != null,
           timeListenable: _time,
           timeline: _timeline,
@@ -216,6 +248,9 @@ class _Controls extends StatelessWidget {
   final ValueChanged<TafsirMode> onTafsirMode;
   final AyahFont font;
   final ValueChanged<AyahFont> onFont;
+  final OverlayTextColor color;
+  final String? colorNote;
+  final ValueChanged<OverlayTextColor> onColor;
   final bool usingExternalAudio;
   final ValueListenable<double> timeListenable;
   final OverlayTimeline timeline;
@@ -230,6 +265,9 @@ class _Controls extends StatelessWidget {
     required this.onTafsirMode,
     required this.font,
     required this.onFont,
+    required this.color,
+    required this.colorNote,
+    required this.onColor,
     required this.usingExternalAudio,
     required this.timeListenable,
     required this.timeline,
@@ -310,6 +348,31 @@ class _Controls extends StatelessWidget {
               selected: {font},
               onSelectionChanged: (s) => onFont(s.first),
             ),
+            const SizedBox(height: 6),
+            // لون النص: أبيض أو أسود بس (طلب أنس).
+            SegmentedButton<OverlayTextColor>(
+              showSelectedIcon: false,
+              segments: [
+                for (final c in OverlayTextColor.values)
+                  ButtonSegment(
+                    value: c,
+                    icon: Icon(Icons.circle,
+                        color: c.text,
+                        shadows: const [
+                          Shadow(color: Colors.grey, blurRadius: 2),
+                        ]),
+                    label: Text('نص ${c.label}'),
+                  ),
+              ],
+              selected: {color},
+              onSelectionChanged: (s) => onColor(s.first),
+            ),
+            if (colorNote != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(colorNote!,
+                    style: const TextStyle(fontSize: 11, color: Colors.black54)),
+              ),
           ],
         ),
       ),

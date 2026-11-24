@@ -33,7 +33,8 @@ OverlayCue cue(RecitationSegment s, [double opacity = 1]) =>
 
 Future<void> pump(WidgetTester tester, Size size, OverlayCue? c,
     {TafsirMode mode = TafsirMode.split,
-    AyahFont font = AyahFont.kfgqpcHafs}) async {
+    AyahFont font = AyahFont.kfgqpcHafs,
+    OverlayTextColor color = OverlayTextColor.white}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -46,6 +47,7 @@ Future<void> pump(WidgetTester tester, Size size, OverlayCue? c,
         cue: c,
         tafsirMode: mode,
         font: font,
+        color: color,
       ),
     ),
   ));
@@ -149,5 +151,34 @@ void main() {
     await pump(tester, const Size(1080, 1920), cue(seg()),
         font: AyahFont.amiriQuran);
     expect(find.byKey(ayahKey), findsOneWidget);
+  });
+
+  // يوم 7 (طلب أنس): النص الأبيض ما بيّن فوق خلفية فاتحة.
+  testWidgets('text color option: white with gold brackets, or all black',
+      (tester) async {
+    for (final c in OverlayTextColor.values) {
+      await pump(tester, const Size(1080, 1920), cue(seg()), color: c);
+      final ayah = tester.widget<Text>(find.byKey(ayahKey)).textSpan! as TextSpan;
+      final open = ayah.children!.first as TextSpan;
+      final close = ayah.children!.last as TextSpan;
+      final tafsir = tester.widget<Text>(find.byKey(tafsirKey));
+      final circle = tester.widget<Container>(find.byKey(numberKey)).decoration!
+          as BoxDecoration;
+      final txt = c == OverlayTextColor.white ? overlayWhite : overlayBlack;
+      final br = c == OverlayTextColor.white ? overlayGold : overlayBlack;
+      expect(ayah.style!.color, txt, reason: c.name);
+      expect(open.style!.color, br, reason: c.name);
+      expect(close.style!.color, br, reason: c.name);
+      expect(tafsir.style!.color, txt, reason: c.name);
+      expect((circle.border! as Border).top.color, txt, reason: c.name);
+    }
+    expect(OverlayTextColor.defaultColor, OverlayTextColor.white);
+  });
+
+  test('auto color: black over bright backgrounds, white otherwise', () {
+    expect(OverlayTextColor.forBackground(0.15, 0.02), OverlayTextColor.white);
+    expect(OverlayTextColor.forBackground(0.5, 0.3), OverlayTextColor.white);
+    expect(OverlayTextColor.forBackground(0.85, 0.95), OverlayTextColor.black);
+    expect(OverlayTextColor.forBackground(0.45, 0.6), OverlayTextColor.black);
   });
 }

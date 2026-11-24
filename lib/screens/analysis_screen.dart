@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../asr/file_downloader.dart';
 import '../pipeline/project_input.dart';
@@ -209,9 +210,23 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               icon: const Icon(Icons.play_circle_outline),
               label: const Text('معاينة النص فوق الفيديو'),
             ),
+            const SizedBox(height: 8),
+            // يوم 7: تقرير كامل (كل المقاطع حتى المخفية + ناتج التعرف الخام)
+            // عشان أنس يبعته لما آية أو كلمة تنقص، ونعرف السبب بالضبط.
+            OutlinedButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(
+                    ClipboardData(text: analysisReport(_input, r)));
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('انتسخ التقرير. الصقه بالمحادثة.')));
+              },
+              icon: const Icon(Icons.copy),
+              label: const Text('نسخ تقرير التحليل'),
+            ),
             const SizedBox(height: 12),
-            for (final s in r.segments.where((s) => s.isVisible))
-              _SegmentTile(segment: s),
+            // كل المقاطع (المخفية باهتة: استعاذة، أو مش قرآن مع نص التعرف).
+            for (final s in r.segments) _SegmentTile(segment: s),
           ],
         );
     }
@@ -264,12 +279,60 @@ class _VideoInfoCard extends StatelessWidget {
   }
 }
 
+/// تقرير نصي للتحليل (للنسخ): معلومات الملف، الآيات، وقت كل مرحلة، كل
+/// المقاطع (حتى المخفية) مع نص التعرف، وناتج التعرف الخام لكل مقطع VAD.
+String analysisReport(ProjectInput input, PipelineResult r) {
+  final v = input.videoInfo;
+  final b = StringBuffer()
+    ..writeln('آية ستوديو – تقرير التحليل')
+    ..writeln('الملف: ${input.videoPath.split('/').last} • '
+        '${v.rotatedWidth}×${v.rotatedHeight} • '
+        '${v.durationSeconds.toStringAsFixed(1)}s'
+        '${input.useExternalAudio && input.externalAudioPath != null ? ' • تلاوة منفصلة: ${input.externalAudioPath!.split('/').last}' : ''}')
+    ..writeln('الآيات: ${r.ayahRefs.join('، ')}')
+    ..writeln('الوقت (ms): ${r.timings.entries.map((e) => '${e.key} ${e.value}').join('، ')}')
+    ..writeln()
+    ..writeln('— المقاطع —');
+  for (final s in r.segments) {
+    b.writeln(s.describe());
+    if (s.text.isNotEmpty) b.writeln('  النص: ${s.text}');
+    if (s.asrText.isNotEmpty) b.writeln('  التعرف: ${s.asrText}');
+  }
+  b
+    ..writeln()
+    ..writeln('— ناتج التعرف الخام (${r.transcript.segments.length} مقطع) —');
+  for (final a in r.transcript.segments) {
+    b.writeln('[${a.start.toStringAsFixed(2)}–${a.end.toStringAsFixed(2)}s] ${a.text.trim()}');
+  }
+  return b.toString();
+}
+
 class _SegmentTile extends StatelessWidget {
   final RecitationSegment segment;
   const _SegmentTile({required this.segment});
 
   @override
   Widget build(BuildContext context) {
+    if (!segment.isVisible) {
+      return Card(
+        color: Colors.grey.shade100,
+        margin: const EdgeInsets.only(bottom: 8),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(segment.describe(),
+                  style: const TextStyle(fontSize: 12, color: Colors.black45)),
+              if (segment.asrText.isNotEmpty)
+                Text('التعرف: ${segment.asrText}',
+                    style: const TextStyle(fontSize: 12, color: Colors.black45),
+                    textDirection: TextDirection.rtl),
+            ],
+          ),
+        ),
+      );
+    }
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(

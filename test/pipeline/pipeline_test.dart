@@ -3,6 +3,7 @@ import 'package:quran_dub/asr/asr_engine.dart';
 import 'package:quran_dub/matching/arabic_normalizer.dart';
 import 'package:quran_dub/matching/quran_corpus_loader.dart';
 import 'package:quran_dub/matching/quran_matcher.dart';
+import 'package:quran_dub/matching/quran_sequence_matcher.dart';
 import 'package:quran_dub/pipeline/quran_text_source.dart';
 import 'package:quran_dub/pipeline/recitation_segment.dart';
 import 'package:quran_dub/pipeline/segment_builder.dart';
@@ -222,5 +223,102 @@ void main() {
       expect(b == 0 || b == c.text.length || c.text[b] == ' ', isTrue,
           reason: 'k=$k b=$b');
     }
+  });
+
+  // ---- يوم 7 (بعد تجربة أنس): كلمات وآيات ناقصة ----
+
+  test('words the ASR missed at the end/start of an ayah are still shown', () {
+    // زي 50:29 بتجربة أنس: التعرف ما طلّع "بظلام للعبيد".
+    final tail = buildRecitationSegments(matcher, text, [
+      seg(0, 6, 'ما يبدل القول لدي وما انا'),
+      seg(7, 12, 'يوم نقول لجهنم هل امتلات وتقول هل من مزيد'),
+    ]);
+    expect(pipelineAyahRefs(tail), ['50:29', '50:30'],
+        reason: tail.map((s) => s.describe()).join('\n'));
+    final a = tail.firstWhere((s) => s.ref == '50:29');
+    expect(a.text, text.ayah(50, 29)!.uthmani);
+    expect(a.kind, SegmentKind.fullAyah);
+    expect(a.showAyahNumber, isTrue);
+
+    // وأول الآية ناقص ("يوم نقول").
+    final head = buildRecitationSegments(matcher, text, [
+      seg(0, 6, 'ما يبدل القول لدي وما انا بظلم للعبيد'),
+      seg(7, 12, 'لجهنم هل امتلات وتقول هل من مزيد'),
+    ]);
+    final b = head.firstWhere((s) => s.ref == '50:30',
+        orElse: () => throw head.map((s) => s.describe()).join('\n'));
+    expect(b.text, text.ayah(50, 30)!.uthmani);
+    expect(b.showAyahNumber, isTrue);
+  });
+
+  test('reader stops mid-ayah and starts over: first reading shows what was read', () {
+    final segs = buildRecitationSegments(matcher, text, [
+      seg(0, 6, 'الله لا اله الا هو الحي القيوم لا تاخذه سنه ولا نوم'),
+      seg(7, 32, 'الله لا اله الا هو الحي القيوم لا تاخذه سنه ولا نوم له ما في السموت وما في الارض من ذا الذي يشفع عنده الا باذنه يعلم ما بين ايديهم وما خلفهم ولا يحيطون بشيء من علمه الا بما شاء وسع كرسيه السموت والارض ولا يوده حفظهما وهو العلي العظيم'),
+    ]);
+    expect(segs.map((s) => s.ref).toList(), ['2:255', '2:255'],
+        reason: segs.map((s) => s.describe()).join('\n'));
+    final full = text.ayah(2, 255)!.uthmani;
+    expect(segs[0].showAyahNumber, isFalse);
+    expect(segs[0].text.length, lessThan(full.length ~/ 2));
+    expect(ArabicNormalizer.key(segs[0].text).endsWith(ArabicNormalizer.key('ولا نوم')),
+        isTrue, reason: segs[0].text);
+    expect(segs[1].text, full);
+    expect(segs[1].showAyahNumber, isTrue);
+  });
+
+  test('several ayahs dropped by ASR are inferred when the time fits the reader pace', () {
+    // الناس: التعرف طلّع 114:1 و114:6 بس، وبينهم وقت يكفي 4 آيات.
+    final segs = buildRecitationSegments(matcher, text, [
+      seg(0, 3, 'قل اعوذ برب الناس'),
+      seg(14, 17, 'من الجنه والناس'),
+    ]);
+    expect(pipelineAyahRefs(segs),
+        ['114:1', '114:2', '114:3', '114:4', '114:5', '114:6'],
+        reason: segs.map((s) => s.describe()).join('\n'));
+    expect(segs.where((s) => s.inferred).length, 4);
+    for (final s in segs.where((s) => s.inferred)) {
+      expect(s.needsReview, isTrue);
+      expect(s.start, greaterThanOrEqualTo(2.9));
+      expect(s.end, lessThanOrEqualTo(14.01));
+    }
+
+    // بس لو ما في وقت يكفي (القارئ قفز)، ما بنخترع آيات.
+    final jump = buildRecitationSegments(matcher, text, [
+      seg(0, 3, 'قل اعوذ برب الناس'),
+      seg(3.6, 6.6, 'من الجنه والناس'),
+    ]);
+    expect(jump.where((s) => s.inferred), isEmpty,
+        reason: jump.map((s) => s.describe()).join('\n'));
+  });
+
+  test('weak segment between two consistent ayahs comes back as an ayah (review)', () {
+    final texts = [
+      'الحمد لله رب العلمين الرحمن الرحيم',
+      'ملك يوم الدين',
+      'اياك نعبد واياك نستعين',
+    ];
+    final asr = [seg(0, 6, texts[0]), seg(6.5, 9, texts[1]), seg(9.5, 13, texts[2])];
+    final matches = QuranSequenceMatcher(matcher).matchAll(texts);
+    expect(matches[1], isNotNull);
+    // نخلّي المقطع الثاني "ضعيف" (زي تسجيل جوال فيه ضجيج).
+    final weak = List<QuranMatch?>.of(matches)
+      ..[1] = matches[1]!.copyWith(confidence: 0.2);
+    final segs = segmentsFromMatches(text, asr, weak);
+    expect(pipelineAyahRefs(segs), ['1:2', '1:3', '1:4', '1:5'],
+        reason: segs.map((s) => s.describe()).join('\n'));
+    final m = segs.firstWhere((s) => s.ref == '1:4');
+    expect(m.inferred, isFalse); // توقيته الحقيقي
+    expect(m.needsReview, isTrue);
+    expect(m.start, closeTo(6.5, 0.01));
+    expect(segs.where((s) => s.kind == SegmentKind.nonQuran), isEmpty);
+
+    // ضعيف بآخر الفيديو (مش محصور): بيضل "مش قرآن" (ممكن يكون دعاء).
+    final tailWeak = List<QuranMatch?>.of(matches)
+      ..[2] = matches[2]!.copyWith(confidence: 0.2);
+    final segs2 = segmentsFromMatches(text, asr, tailWeak);
+    expect(segs2.last.kind, SegmentKind.nonQuran,
+        reason: segs2.map((s) => s.describe()).join('\n'));
+    expect(segs2.last.suggestedRef, '1:5');
   });
 }

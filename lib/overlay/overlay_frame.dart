@@ -9,6 +9,30 @@ import 'tafsir_display.dart';
 /// ألوان النص فوق الفيديو (من المقطع المرجعي).
 const Color overlayWhite = Color(0xFFFFFFFF);
 const Color overlayGold = Color(0xFFD9B55E);
+const Color overlayBlack = Color(0xFF000000);
+
+/// لون النص فوق الفيديو: **أبيض أو أسود بس** (طلب أنس يوم 7، لما النص
+/// الأبيض ما بيّن فوق خلفية فاتحة). الأبيض = شكل المقطع المرجعي (النص أبيض
+/// والأقواس ذهبية). الأسود = كل شي أسود (الآية والأقواس ودائرة الرقم
+/// والتفسير)، لأنه الذهبي كمان ما بيبيّن على الأبيض. التخصيص الكامل (ألوان
+/// ثانية، ظل، خلفية) = يوم 9.
+enum OverlayTextColor {
+  white('أبيض'),
+  black('أسود');
+
+  final String label;
+  const OverlayTextColor(this.label);
+
+  static const OverlayTextColor defaultColor = white;
+
+  Color get text => this == white ? overlayWhite : overlayBlack;
+  Color get bracket => this == white ? overlayGold : overlayBlack;
+
+  /// اللون الأوضح فوق خلفية متوسط سطوعها [luma] (0 أسود .. 1 أبيض) ونسبة
+  /// البكسلات الفاتحة فيها [brightFraction] (بمنطقة النص).
+  static OverlayTextColor forBackground(double luma, double brightFraction) =>
+      luma > 0.58 || brightFraction > 0.5 ? black : white;
+}
 
 /// عائلة خط التفسير ورقم الآية (Amiri، SIL OFL).
 const String tafsirFontFamily = 'Amiri';
@@ -28,6 +52,7 @@ class AyahOverlayFrame extends StatelessWidget {
   final OverlayCue? cue;
   final TafsirMode tafsirMode;
   final AyahFont font;
+  final OverlayTextColor color;
 
   const AyahOverlayFrame({
     super.key,
@@ -36,6 +61,7 @@ class AyahOverlayFrame extends StatelessWidget {
     required this.cue,
     this.tafsirMode = TafsirMode.split,
     this.font = AyahFont.defaultFont,
+    this.color = OverlayTextColor.defaultColor,
   });
 
   @override
@@ -69,6 +95,7 @@ class AyahOverlayFrame extends StatelessWidget {
                         metrics: m,
                         tafsirMode: tafsirMode,
                         font: font,
+                        color: color,
                       ),
                     ),
                   ),
@@ -86,12 +113,14 @@ class _TextBlock extends StatelessWidget {
   final OverlayMetrics metrics;
   final TafsirMode tafsirMode;
   final AyahFont font;
+  final OverlayTextColor color;
 
   const _TextBlock({
     required this.segment,
     required this.metrics,
     required this.tafsirMode,
     required this.font,
+    required this.color,
   });
 
   @override
@@ -117,7 +146,7 @@ class _TextBlock extends StatelessWidget {
                 fontFamily: tafsirFontFamily,
                 fontSize: m.tafsirFontSize,
                 height: m.tafsirLineHeight,
-                color: overlayWhite,
+                color: color.text,
                 decoration: TextDecoration.none,
               ),
             ),
@@ -140,7 +169,7 @@ class _TextBlock extends StatelessWidget {
           fontFamily: tafsirFontFamily,
           fontSize: m.ayahFontSize,
           height: m.tafsirLineHeight,
-          color: overlayWhite,
+          color: color.text,
           decoration: TextDecoration.none,
         ),
       );
@@ -150,12 +179,12 @@ class _TextBlock extends StatelessWidget {
       fontFamily: font.family,
       fontSize: m.ayahFontSize,
       height: m.ayahLineHeight,
-      color: overlayWhite,
+      color: color.text,
       decoration: TextDecoration.none,
     );
     final bracket = base.copyWith(
       fontFamily: AyahFont.amiriQuran.family,
-      color: overlayGold,
+      color: color.bracket,
     );
     return Text.rich(
       TextSpan(
@@ -166,7 +195,8 @@ class _TextBlock extends StatelessWidget {
           if (segment.showAyahNumber && segment.ayah != null)
             WidgetSpan(
               alignment: PlaceholderAlignment.middle,
-              child: _AyahNumberCircle(number: segment.ayah!, metrics: m),
+              child: _AyahNumberCircle(
+                  number: segment.ayah!, metrics: m, color: color.text),
             ),
           TextSpan(text: ayahCloseBracket, style: bracket),
         ],
@@ -178,11 +208,13 @@ class _TextBlock extends StatelessWidget {
   }
 }
 
-/// دائرة رقم الآية: حد أبيض رفيع ورقم أبيض بأرقام عربية-هندية.
+/// دائرة رقم الآية: حد رفيع ورقم بأرقام عربية-هندية، بلون النص.
 class _AyahNumberCircle extends StatelessWidget {
   final int number;
   final OverlayMetrics metrics;
-  const _AyahNumberCircle({required this.number, required this.metrics});
+  final Color color;
+  const _AyahNumberCircle(
+      {required this.number, required this.metrics, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -196,7 +228,7 @@ class _AyahNumberCircle extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          border: Border.all(color: overlayWhite, width: m.circleBorder),
+          border: Border.all(color: color, width: m.circleBorder),
         ),
         // رقم من 3 خانات (آية 100+) بيصغّر ليتسع بالدائرة.
         child: Padding(
@@ -210,7 +242,7 @@ class _AyahNumberCircle extends StatelessWidget {
                 fontFamily: tafsirFontFamily,
                 fontSize: m.numberFontSize,
                 height: 1,
-                color: overlayWhite,
+                color: color,
                 decoration: TextDecoration.none,
               ),
             ),

@@ -153,6 +153,32 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
+                    // يوم 7: سطوع منطقة النص (لاختيار نص أبيض أو أسود تلقائياً).
+                    "textBandBrightness" -> {
+                        val path = call.argument<String>("path")
+                        if (path == null) {
+                            result.error("ARGS", "path مطلوب", null)
+                            return@setMethodCallHandler
+                        }
+                        val durationMs = (call.argument<Number>("durationMs") ?: 0).toLong()
+                        val expectPortrait = call.argument<Boolean>("expectPortrait")
+                        audioExecutor.execute {
+                            try {
+                                val b = FrameBrightness.measure(path, durationMs, expectPortrait)
+                                runOnUiThread {
+                                    result.success(
+                                        mapOf(
+                                            "luma" to b.luma,
+                                            "brightFraction" to b.brightFraction,
+                                            "frames" to b.frames,
+                                        )
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("BRIGHTNESS", e.message ?: e.toString(), null) }
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
