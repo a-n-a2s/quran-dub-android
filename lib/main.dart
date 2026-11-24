@@ -9,6 +9,7 @@ import 'pipeline/project_input.dart';
 import 'platform/camera_recorder.dart';
 import 'platform/gallery_picker.dart';
 import 'platform/video_info.dart';
+import 'debug/crash_report_banner.dart';
 import 'screens/analysis_screen.dart';
 
 void main() {
@@ -151,6 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
+            const CrashReportBanner(),
             FutureBuilder<_SeedStatus>(
             future: _seedFuture,
             builder: (context, snapshot) {

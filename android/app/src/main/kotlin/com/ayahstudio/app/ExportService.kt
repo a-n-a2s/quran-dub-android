@@ -90,11 +90,25 @@ class ExportService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        CrashLog.install(this)
+        CrashLog.trace(this, "service:onCreate")
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
                 val path = intent.getStringExtra(EXTRA_PLAN)
-                goForeground("تجهيز…", 0, true)
+                CrashLog.trace(this, "service:startForeground")
+                try {
+                    goForeground("تجهيز…", 0, true)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "startForeground failed", e)
+                    fail("unknown", "startForeground: $e")
+                    return START_NOT_STICKY
+                }
+                CrashLog.trace(this, "service:foreground ok")
                 if (transformer != null) {
                     // تصدير شغّال: الواجهة بتمنع هالحالة، بس للاحتياط.
                     Log.w(TAG, "export already running, ignoring new request")
@@ -195,9 +209,10 @@ class ExportService : Service() {
             startedAt = SystemClock.elapsedRealtime()
             lastPercent = -1
             status("encoding", 0.0)
+            CrashLog.trace(this, "transformer:start")
             t.start(composition, p.output)
             main.post(pollProgress)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "start failed", e)
             transformer = null
             fail("unknown", e.toString())

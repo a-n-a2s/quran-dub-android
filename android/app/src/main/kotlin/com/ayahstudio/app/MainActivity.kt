@@ -59,6 +59,7 @@ class MainActivity : FlutterActivity() {
         configureGalleryChannel(flutterEngine)
         configureCameraChannel(flutterEngine)
         configureExportChannel(flutterEngine)
+        CrashLog.install(this)
     }
 
     override fun onDestroy() {
@@ -88,6 +89,12 @@ class MainActivity : FlutterActivity() {
                                 result.error("START", e.message ?: e.toString(), null)
                             }
                         }
+                    }
+                    "crashReport" -> result.success(CrashLog.report(this))
+                    "clearCrashReport" -> { CrashLog.clear(this); result.success(null) }
+                    "trace" -> {
+                        CrashLog.trace(this, call.argument<String>("line") ?: "")
+                        result.success(null)
                     }
                     "cancel" -> {
                         ExportService.cancel(this)

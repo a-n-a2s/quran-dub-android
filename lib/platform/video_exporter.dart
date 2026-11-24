@@ -26,6 +26,28 @@ class VideoExporter {
   static Future<void> start(String planPath) =>
       _channel.invokeMethod('start', {'plan': planPath});
 
+  /// خطوة بسجل التشخيص (بيضل بعد الانهيار؛ `START` بيمسح القديم).
+  static Future<void> trace(String line) async {
+    try {
+      await _channel.invokeMethod('trace', {'line': line});
+    } catch (_) {}
+  }
+
+  /// تقرير آخر انهيار/خروج غير طبيعي (null لو ما في).
+  static Future<String?> crashReport() async {
+    try {
+      return await _channel.invokeMethod<String>('crashReport');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> clearCrashReport() async {
+    try {
+      await _channel.invokeMethod('clearCrashReport');
+    } catch (_) {}
+  }
+
   static Future<void> cancel() => _channel.invokeMethod('cancel');
 
   /// قائمة المشاركة تبع الجوال (واتساب، انستغرام، تيك توك، يوتيوب...).

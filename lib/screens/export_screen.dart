@@ -126,6 +126,8 @@ class _ExportScreenState extends State<ExportScreen> {
       ..reset()
       ..start();
     try {
+      await VideoExporter.trace('START');
+      await VideoExporter.trace('dart:permissions');
       // صلاحيات وقت الحاجة بس: الإشعارات (13+)، والتخزين (7–9 بس).
       final notif = await VideoExporter.requestNotificationPermission();
       await VideoExporter.requestStoragePermission();
@@ -148,6 +150,8 @@ class _ExportScreenState extends State<ExportScreen> {
         return;
       }
 
+      await VideoExporter.trace(
+          'dart:plan ${plan.size.width}x${plan.size.height} cues=${plan.cues.length} band=${plan.band.height}');
       // صور النص: نفس AyahOverlayFrame ونفس الخط الزمني تبع المعاينة.
       final tl = req.timeline;
       final metrics = OverlayMetrics.forSize(plan.size.width, plan.size.height);
@@ -160,6 +164,7 @@ class _ExportScreenState extends State<ExportScreen> {
           }
           return;
         }
+        await VideoExporter.trace('dart:render ${i + 1}/${tl.items.length}');
         final png = await _renderer.renderPng(OverlayRenderJob(
           width: plan.size.width,
           height: plan.size.height,
@@ -175,6 +180,7 @@ class _ExportScreenState extends State<ExportScreen> {
         }
       }
       _prepareMs = _prepareWatch.elapsedMilliseconds;
+      await VideoExporter.trace('dart:rendered all, writing plan');
 
       final json = plan.toJson()
         ..['keepWorkFiles'] = req.keepWorkFiles
@@ -191,7 +197,9 @@ class _ExportScreenState extends State<ExportScreen> {
       _plan = plan;
       _activeId = plan.id;
       setState(() => _status = ExportStatus(id: plan.id, phase: ExportPhase.encoding));
+      await VideoExporter.trace('dart:calling start');
       await VideoExporter.start(planPath);
+      await VideoExporter.trace('dart:start returned');
     } on PlatformException catch (e) {
       _fail(ExportErrorKind.unknown, '${e.code}: ${e.message}');
     } catch (e) {
