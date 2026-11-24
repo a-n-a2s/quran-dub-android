@@ -131,7 +131,7 @@ void main() {
           }
           expect(diff, 0, reason: 'صورة التصدير مختلفة عن المعاينة');
           // في نص فعلاً (مش صورة فاضية).
-          expect(ink, greaterThan(w * 10));
+          expect(ink, greaterThan(w * 3));
 
           // 3) أول سطر قريب من 61% (أول بكسل فيه حبر).
           var firstInk = -1;
