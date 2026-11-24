@@ -23,6 +23,18 @@ android {
         versionName = flutter.versionName
     }
 
+    // مفتاح توقيع debug ثابت (مش سري، بس للنسخ التجريبية): قبل هيك كل بناء بالـ CI
+    // كان يتوقّع بمفتاح debug جديد، فجوال أنس كان يرفض التحديث فوق النسخة
+    // المثبّتة ("package appears to be invalid"). release بعدين بمفتاح حقيقي.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("keys/ayah-debug.p12")
+            storePassword = "android"
+            keyAlias = "ayahdebug"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             // توقيع مؤقت بمفتاح debug لحد ما نجهز مفتاح release حقيقي
