@@ -24,7 +24,9 @@ class OverlayMetrics {
   /// الفجوة بين آخر سطر آية وأول سطر تفسير.
   final double gap;
 
-  /// دائرة رقم الآية.
+  /// دائرة رقم الآية (يوم 7 الأول). من تصليحات يوم 7 الرقم صار علامة نهاية
+  /// الآية زي المصحف بنفس خط الآية ([AyahFont.ayahNumberMark])، فهالمقاسات
+  /// ما عادت بتنستعمل بالرسم (باقية للتوافق، والمحرر يوم 9 ممكن يستعملها).
   final double circleSize;
   final double circleBorder;
   final double numberFontSize;

@@ -58,7 +58,6 @@ Future<void> pump(WidgetTester tester, Size size, OverlayCue? c,
 void main() {
   const ayahKey = ValueKey('overlay-ayah');
   const tafsirKey = ValueKey('overlay-tafsir');
-  const numberKey = ValueKey('overlay-ayah-number');
 
   testWidgets('first line at 61% of the height on portrait/landscape/square',
       (tester) async {
@@ -77,12 +76,38 @@ void main() {
     }
   });
 
-  testWidgets('ayah number circle only with the last part', (tester) async {
+  // يوم 7 (طلب أنس): الرقم بعلامة نهاية الآية زي المصحف، بنفس خط الآية وعلى
+  // نفس السطر (مش دائرة فوق الكلام).
+  String ayahPlain(WidgetTester tester) =>
+      (tester.widget<Text>(find.byKey(ayahKey)).textSpan! as TextSpan)
+          .toPlainText();
+
+  testWidgets('ayah number as a Mushaf end-of-ayah mark, only with the last part',
+      (tester) async {
     await pump(tester, const Size(1080, 1920), cue(seg(number: true)));
-    expect(find.byKey(numberKey), findsOneWidget);
-    expect(find.text('٢٧'), findsOneWidget);
+    // مصحف المدينة: الأرقام نفسها بتطلع بإطار المصحف (مسافة ما بتنكسر قبلها).
+    expect(ayahPlain(tester), contains('\u00A0٢٧'));
+    expect(ayahPlain(tester), isNot(contains(endOfAyah)));
+    expect(ayahPlain(tester).endsWith('\u202F$ayahCloseBracket'), isTrue);
+    // ما في ويدجت دائرة منفصل (الرقم نص بنفس السطر).
+    expect(
+        find.descendant(
+            of: find.byType(AyahOverlayFrame), matching: find.byType(DecoratedBox)),
+        findsNothing);
+
+    // أميري قرآن: U+06DD قبل الأرقام.
+    await pump(tester, const Size(1080, 1920), cue(seg(number: true)),
+        font: AyahFont.amiriQuran);
+    expect(ayahPlain(tester), contains('\u00A0$endOfAyah٢٧'));
+
     await pump(tester, const Size(1080, 1920), cue(seg(number: false)));
-    expect(find.byKey(numberKey), findsNothing);
+    expect(ayahPlain(tester), isNot(contains('٢٧')));
+    expect(ayahPlain(tester).endsWith('ۥ$ayahCloseBracket'), isTrue);
+  });
+
+  test('ayahNumberMark per font', () {
+    expect(AyahFont.kfgqpcHafs.ayahNumberMark(255), '٢٥٥');
+    expect(AyahFont.amiriQuran.ayahNumberMark(7), '\u06DD٧');
   });
 
   testWidgets('no box or background behind the text', (tester) async {
@@ -164,15 +189,16 @@ void main() {
       final open = ayah.children!.first as TextSpan;
       final close = ayah.children!.last as TextSpan;
       final tafsir = tester.widget<Text>(find.byKey(tafsirKey));
-      final circle = tester.widget<Container>(find.byKey(numberKey)).decoration!
-          as BoxDecoration;
+      final number = ayah.children![2] as TextSpan; // علامة نهاية الآية
       final txt = c == OverlayTextColor.white ? overlayWhite : overlayBlack;
       final br = c == OverlayTextColor.white ? overlayGold : overlayBlack;
       expect(ayah.style!.color, txt, reason: c.name);
       expect(open.style!.color, br, reason: c.name);
       expect(close.style!.color, br, reason: c.name);
       expect(tafsir.style!.color, txt, reason: c.name);
-      expect((circle.border! as Border).top.color, txt, reason: c.name);
+      // العلامة بتورث لون النص (ما إلها لون لحالها).
+      expect(number.text, contains('٢٧'));
+      expect(number.style?.color, isNull, reason: c.name);
     }
     expect(OverlayTextColor.defaultColor, OverlayTextColor.white);
   });

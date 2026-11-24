@@ -23,7 +23,22 @@ enum AyahFont {
         AyahFont.kfgqpcHafs => KfgqpcCompat.convert(text),
         AyahFont.amiriQuran => text,
       };
+
+  /// علامة نهاية الآية **زي المصحف** (زخرفة حوالين الرقم، والرقم جواها
+  /// بأرقام عربية-هندية)، كنص بنفس خط الآية (فبتقعد على نفس السطر وبنفس
+  /// الارتفاع، مش أعلى من الكلام). (يوم 7، طلب أنس: بدل الدائرة البسيطة.)
+  /// - خط مصحف المدينة (KFGQPC): الأرقام نفسها بتطلع بإطار المصحف المزخرف
+  ///   (هيك مرمّزة بالخط، زي نص مجمع الملك فهد: "...ٱلرَّحِيمِ ١").
+  /// - أميري قرآن: U+06DD (علامة نهاية الآية) قبل الأرقام → الخط بيحطهم
+  ///   جواها.
+  String ayahNumberMark(int ayah) => switch (this) {
+        AyahFont.kfgqpcHafs => toArabicIndic(ayah),
+        AyahFont.amiriQuran => '$endOfAyah${toArabicIndic(ayah)}',
+      };
 }
+
+/// U+06DD ARABIC END OF AYAH.
+const String endOfAyah = '\u06DD';
 
 /// الأقواس المزخرفة (الذهبية). U+FD3F أول (يمين بالعربي) وU+FD3E آخر، مثل
 /// التصوّر المرسوم. خط KFGQPC ما فيهم، فبيتصيّروا دايماً بأميري قرآن.
@@ -68,7 +83,7 @@ class KfgqpcCompat {
   }
 }
 
-/// أرقام عربية-هندية (رقم الآية بالدائرة).
+/// أرقام عربية-هندية (رقم الآية بعلامة نهاية الآية).
 String toArabicIndic(int n) {
   const digits = '٠١٢٣٤٥٦٧٨٩';
   return n.toString().split('').map((d) {

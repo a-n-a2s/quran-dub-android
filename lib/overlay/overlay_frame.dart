@@ -47,7 +47,8 @@ const String tafsirFontFamily = 'Amiri';
 /// صندوق أو خلفية: الفيديو بيضل ظاهر وراء النص.
 ///
 /// الشكل (المقطع المرجعي): ﴿ الآية [رقم] ﴾ بالرسم العثماني، أبيض والأقواس
-/// ذهبية، والرقم بدائرة بيضاء صغيرة (أرقام عربية-هندية) مع آخر جزء بس،
+/// ذهبية، والرقم بعلامة نهاية الآية المزخرفة زي المصحف (أرقام عربية-هندية،
+/// بنفس خط الآية وعلى نفس السطر) مع آخر جزء بس،
 /// والتفسير تحتها مباشرة. أول سطر عند 61% من الارتفاع؛ وكتلة أطول من المتاح
 /// بتتصغّر لتتسع (ما بتطلع برا الفيديو).
 class AyahOverlayFrame extends StatelessWidget {
@@ -204,85 +205,27 @@ class _TextBlock extends StatelessWidget {
       fontFamily: AyahFont.amiriQuran.family,
       color: color.bracket,
     );
+    final number = segment.showAyahNumber && segment.ayah != null;
     return Text.rich(
       TextSpan(
         style: base,
         children: [
           TextSpan(text: ayahOpenBracket, style: bracket),
           TextSpan(text: font.prepare(segment.text)),
-          if (segment.showAyahNumber && segment.ayah != null)
-            WidgetSpan(
-              alignment: PlaceholderAlignment.middle,
-              child: _AyahNumberCircle(
-                  number: segment.ayah!, metrics: m, color: color, shadow: shadow),
-            ),
-          TextSpan(text: ayahCloseBracket, style: bracket),
+          // رقم الآية بعلامة نهاية الآية زي المصحف (زخرفة حوالين الرقم)، بنفس
+          // خط الآية وعلى نفس السطر. مسافة ما بتنكسر قبلها عشان العلامة ما
+          // تنزل لحالها لسطر جديد.
+          if (number)
+            TextSpan(text: '\u00A0${font.ayahNumberMark(segment.ayah!)}'),
+          // مسافة ضيقة (ما بتنكسر) بين العلامة والقوس.
+          TextSpan(
+              text: number ? '\u202F$ayahCloseBracket' : ayahCloseBracket,
+              style: bracket),
         ],
       ),
       key: const ValueKey('overlay-ayah'),
       textAlign: TextAlign.center,
       textDirection: TextDirection.rtl,
-    );
-  }
-}
-
-/// دائرة رقم الآية: حد رفيع ورقم بأرقام عربية-هندية، بلون النص.
-class _AyahNumberCircle extends StatelessWidget {
-  final int number;
-  final OverlayMetrics metrics;
-  final OverlayTextColor color;
-  final bool shadow;
-  const _AyahNumberCircle(
-      {required this.number,
-      required this.metrics,
-      required this.color,
-      required this.shadow});
-
-  @override
-  Widget build(BuildContext context) {
-    final m = metrics;
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: m.circleMargin),
-      child: Container(
-        key: const ValueKey('overlay-ayah-number'),
-        width: m.circleSize,
-        height: m.circleSize,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: color.text, width: m.circleBorder),
-          // الظل حوالين الدائرة نفسها (حلقة ناعمة بلون الظل، بدون تعبئة).
-          boxShadow: shadow
-              ? [
-                  BoxShadow(
-                    color: color.shadow.withValues(alpha: 0.55),
-                    blurRadius: m.shadowBlur,
-                    spreadRadius: m.circleBorder,
-                    blurStyle: BlurStyle.outer,
-                  ),
-                ]
-              : null,
-        ),
-        // رقم من 3 خانات (آية 100+) بيصغّر ليتسع بالدائرة.
-        child: Padding(
-          padding: EdgeInsets.all(m.circleBorder * 1.5),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              toArabicIndic(number),
-              textDirection: TextDirection.rtl,
-              style: TextStyle(
-                fontFamily: tafsirFontFamily,
-                fontSize: m.numberFontSize,
-                height: 1,
-                color: color.text,
-                shadows: shadow ? overlayShadows(m, color) : null,
-                decoration: TextDecoration.none,
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
