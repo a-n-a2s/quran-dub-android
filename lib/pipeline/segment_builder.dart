@@ -233,15 +233,19 @@ List<RecitationSegment> _buildGroup(
     }
   }
 
-  List<String> tafsirs;
-  final splitWanted = options.tafsirMode == TafsirMode.split &&
-      p > 1 &&
-      tafsirFull.length >= options.minTafsirCharsPerPart * p;
+  // نمط التقسيم بيتحسب دايماً ([RecitationSegment.tafsirSplit]) عشان المعاينة
+  // تبدّل بين النمطين بدون إعادة تحليل؛ و[RecitationSegment.tafsir] بتتبع
+  // [PipelineOptions.tafsirMode].
+  final splitWanted =
+      p > 1 && tafsirFull.length >= options.minTafsirCharsPerPart * p;
   final split = splitWanted && len > 0
       ? TafsirSplitter.split(
           tafsirFull, [for (final it in items) (it.ks / len, it.ke / len)])
       : null;
-  tafsirs = split ?? List.filled(p, tafsirFull);
+  final splitTafsirs = split ?? List.filled(p, tafsirFull);
+  final tafsirs = options.tafsirMode == TafsirMode.split
+      ? splitTafsirs
+      : List.filled(p, tafsirFull);
 
   final out = <RecitationSegment>[];
   for (var k = 0; k < p; k++) {
@@ -262,6 +266,7 @@ List<RecitationSegment> _buildGroup(
       showAyahNumber: k == p - 1 && it.ke == len,
       tafsir: tafsirs[k],
       tafsirFull: tafsirFull,
+      tafsirSplit: splitTafsirs[k],
       confidence: it.confidence,
       needsReview: it.review,
       asrText: it.asr,

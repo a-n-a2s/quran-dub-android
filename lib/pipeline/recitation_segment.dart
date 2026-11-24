@@ -55,6 +55,12 @@ class RecitationSegment {
   /// تفسير الآية كامل (لخيار "تفسير كامل تحت كل جزء" وللمحرر).
   final String tafsirFull;
 
+  /// قطعة التفسير الخاصة بهالجزء بنمط [TafsirMode.split] دايماً (بغض النظر
+  /// عن [tafsir]): الآية اللي ما انقسمت أو تفسيرها قصير = نفس [tafsirFull].
+  /// بيخلّي المعاينة تبدّل بين النمطين بدون إعادة التحليل (يوم 7). فاضي
+  /// للبسملة/الاستعاذة/غير القرآني.
+  final String tafsirSplit;
+
   final double confidence;
 
   /// ثقة واطية أو موقع مش محسوم → بده مراجعة (التصحيح اليدوي، القسم 4).
@@ -87,6 +93,7 @@ class RecitationSegment {
     this.showAyahNumber = false,
     this.tafsir = '',
     this.tafsirFull = '',
+    this.tafsirSplit = '',
     required this.confidence,
     this.needsReview = false,
     this.suggestedRef,
@@ -119,6 +126,7 @@ class RecitationSegment {
         showAyahNumber: showAyahNumber,
         tafsir: tafsir ?? this.tafsir,
         tafsirFull: tafsirFull,
+        tafsirSplit: tafsirSplit,
         confidence: confidence,
         needsReview: needsReview,
         suggestedRef: suggestedRef,
@@ -159,6 +167,7 @@ class RecitationSegment {
         'show_ayah_number': showAyahNumber,
         'tafsir': tafsir,
         'tafsir_full': tafsirFull,
+        'tafsir_split': tafsirSplit,
         'confidence': double.parse(confidence.toStringAsFixed(3)),
         'needs_review': needsReview,
         'suggested_ref': suggestedRef,

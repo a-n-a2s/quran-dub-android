@@ -7,6 +7,7 @@ import '../pipeline/project_input.dart';
 import '../pipeline/recitation_pipeline.dart';
 import '../pipeline/recitation_segment.dart';
 import '../platform/media_picker.dart';
+import 'overlay_preview_screen.dart';
 
 enum _AnalysisState { validating, analyzing, done, error }
 
@@ -195,6 +196,19 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
           children: [
             Text('الآيات: ${r.ayahRefs.join('، ')}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            // يوم 7: معاينة الفيديو مع النص المتزامن (نمط التفسير وخط الآية
+            // بتتبدّل جوا شاشة المعاينة).
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => OverlayPreviewScreen(
+                  input: _input,
+                  segments: r.segments,
+                ),
+              )),
+              icon: const Icon(Icons.play_circle_outline),
+              label: const Text('معاينة النص فوق الفيديو'),
+            ),
             const SizedBox(height: 12),
             for (final s in r.segments.where((s) => s.isVisible))
               _SegmentTile(segment: s),

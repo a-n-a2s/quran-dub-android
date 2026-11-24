@@ -18,6 +18,8 @@ dependencies:
   sherpa_onnx: ^2.0.3
   # SHA256 لملفات النموذج
   crypto: ^3.0.3
+  # معاينة الفيديو (يوم 7). الرسمي من فريق Flutter (ExoPlayer على أندرويد).
+  video_player: ^2.12.0
 
 dev_dependencies:
   flutter_test:
@@ -28,3 +30,14 @@ flutter:
   uses-material-design: true
   assets:
     - assets/quran/quran_data.json.gz
+  # خطوط الآية والتفسير (يوم 7) — الرخص بـ assets/fonts/LICENSES.md
+  fonts:
+    - family: KFGQPC Hafs
+      fonts:
+        - asset: assets/fonts/KFGQPC_HafsUthmanic_v18.ttf
+    - family: Amiri Quran
+      fonts:
+        - asset: assets/fonts/AmiriQuran.ttf
+    - family: Amiri
+      fonts:
+        - asset: assets/fonts/Amiri-Regular.ttf
