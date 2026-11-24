@@ -7,6 +7,18 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- اختيار المقطع من المعرض وتصوير جديد لا بتحتاج صلاحية تخزين (Photo
          Picker / SAF / FileProvider، يوم 5-6)، فما ضفنا READ_MEDIA_*. -->
+    <!-- يوم 8: التصدير بالخلفية (foreground service) + إشعار التقدّم و"خلص".
+         mediaProcessing (أندرويد 15+) = ترميز الوسائط؛ dataSync لأندرويد 14
+         (mediaProcessing مش موجود فيه). لازم تنذكر بـ Play Console (يوم 25). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- أندرويد 13+: بتنطلب وقت التصدير بس (مش عند فتح التطبيق). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- الحفظ بالمعرض على أندرويد 7–9 بس؛ من أندرويد 10 MediaStore بدون صلاحية. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <application
@@ -33,6 +45,11 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- يوم 8: تصدير الفيديو بالخلفية (Media3 Transformer). -->
+        <service
+            android:name=".ExportService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProcessing|dataSync" />
         <!-- يوم 6: Uri مشارك مع تطبيق الكاميرا (ACTION_VIDEO_CAPTURE)، بدون
              ما نعطيه صلاحية كتابة عامة على ملفات التطبيق. -->
         <provider

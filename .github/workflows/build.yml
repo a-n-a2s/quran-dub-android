@@ -39,8 +39,8 @@ jobs:
       - name: Analyze (غير قاطع مؤقتاً)
         run: flutter analyze || true
 
-      - name: Tests (QuranMatcher + WAV/ASR helpers + pipeline + overlay)
-        run: flutter test test/matching test/asr test/pipeline test/overlay
+      - name: Tests (QuranMatcher + WAV/ASR helpers + pipeline + overlay + export)
+        run: flutter test test/matching test/asr test/pipeline test/overlay test/export
 
       # بس معالجات الجوالات الحقيقية (arm64 + arm 32-bit)، بدون x86_64 (محاكي).
       - name: Build debug APK

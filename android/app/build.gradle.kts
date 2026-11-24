@@ -48,10 +48,30 @@ flutter {
     source = "../.."
 }
 
+// يوم 8: Media3 (Transformer للتصدير + ExoPlayer تبع video_player) لازم كلها
+// نفس النسخة، وإلا Gradle بياخد أعلى نسخة لكل وحدة لحالها وبيصير خلط.
+val media3Version = "1.9.2"
+configurations.all {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "androidx.media3") {
+            useVersion(media3Version)
+            because("Media3 modules must share one version (day 8 export + video_player)")
+        }
+    }
+}
+
 dependencies {
     // يوم 6: FileProvider (مشاركة ملف الكاميرا مع تطبيق الكاميرا) +
     // ActivityCompat/ContextCompat (صلاحيات CAMERA/RECORD_AUDIO وقت الحاجة).
     // الطبقة فعلياً موجودة ضمن اعتماديات محرك Flutter، بس بنثبّتها هون
     // بشكل مباشر عشان ما نعتمد على ترتيب تبعيات غير مضمون.
     implementation("androidx.core:core-ktx:1.13.1")
+    // يوم 8: تصدير الفيديو والنص محروق فيه (H.264 + AAC بـ MP4، overlay بـ GPU).
+    // نفس نمط الأيام 4–6: dependency مباشرة بدون plugin Flutter. النسخة 1.9.2 =
+    // نفس ExoPlayer تبع video_player_android، عشان كل وحدات Media3 بالتطبيق
+    // تكون نسخة وحدة (فوق: resolutionStrategy). آخر stable هو 1.11.1، بس الخلط
+    // بين نسختين من Media3 بالـ classpath ممكن يكسر وقت التشغيل.
+    implementation("androidx.media3:media3-transformer:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version")
+    implementation("androidx.media3:media3-common:$media3Version")
 }

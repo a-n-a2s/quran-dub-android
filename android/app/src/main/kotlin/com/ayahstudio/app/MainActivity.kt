@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.core.app.ActivityCompat
@@ -14,9 +15,11 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import androidx.media3.common.util.UnstableApi
 import java.io.File
 import java.util.concurrent.Executors
 
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 class MainActivity : FlutterActivity() {
     private val audioExecutor = Executors.newSingleThreadExecutor()
 
@@ -32,11 +35,19 @@ class MainActivity : FlutterActivity() {
     private var pendingCameraFile: File? = null
     private var pendingPermissionResult: MethodChannel.Result? = null
 
+    // --- يوم 8: التصدير (صلاحيات وقت الحاجة + حالة الخدمة للـ Dart) ---
+    private var pendingNotifPermission: MethodChannel.Result? = null
+    private var pendingStoragePermission: MethodChannel.Result? = null
+    private var exportStatusSink: EventChannel.EventSink? = null
+    private val exportListener: (Map<String, Any?>) -> Unit = { exportStatusSink?.success(it) }
+
     companion object {
         private const val PICK_MEDIA = 4201
         private const val PICK_GALLERY_VIDEO = 4202
         private const val RECORD_VIDEO = 4203
         private const val REQUEST_CAMERA_PERMS = 4204
+        private const val REQUEST_NOTIFICATIONS = 4205
+        private const val REQUEST_STORAGE = 4206
         private val CAMERA_PERMISSIONS = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
     }
 
@@ -47,6 +58,142 @@ class MainActivity : FlutterActivity() {
         configureVideoInfoChannel(flutterEngine)
         configureGalleryChannel(flutterEngine)
         configureCameraChannel(flutterEngine)
+        configureExportChannel(flutterEngine)
+    }
+
+    override fun onDestroy() {
+        ExportHub.removeListener(exportListener)
+        super.onDestroy()
+    }
+
+    // =====================================================================
+    // يوم 8: التصدير (ExportService بالخلفية) — بدء/إلغاء/حالة، مشاركة وفتح
+    // الناتج، وصلاحيتي الإشعارات (13+) والتخزين (7–9 بس) وقت الحاجة.
+    // =====================================================================
+    private fun configureExportChannel(flutterEngine: FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.ayahstudio.app/export")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        val plan = call.argument<String>("plan")
+                        if (plan == null) {
+                            result.error("ARGS", "plan مطلوب", null)
+                        } else if (ExportHub.isRunning) {
+                            result.error("BUSY", "في تصدير شغّال", null)
+                        } else {
+                            try {
+                                ExportService.start(this, plan)
+                                result.success(true)
+                            } catch (e: Exception) {
+                                result.error("START", e.message ?: e.toString(), null)
+                            }
+                        }
+                    }
+                    "cancel" -> {
+                        ExportService.cancel(this)
+                        result.success(null)
+                    }
+                    "getStatus" -> result.success(ExportHub.status)
+                    "share", "open" -> {
+                        val uri = ExportService.shareableUri(this, ExportHub.status)
+                        if (uri == null) {
+                            result.error("NO_OUTPUT", "ما في فيديو جاهز", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            startActivity(
+                                if (call.method == "share") ExportNotifications.shareIntent(uri)
+                                else ExportNotifications.viewIntent(uri)
+                            )
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("NO_APP", e.message ?: e.toString(), null)
+                        }
+                    }
+                    "saveToGallery" -> saveLastToGallery(result)
+                    "notificationsEnabled" -> result.success(
+                        androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()
+                    )
+                    "requestNotificationPermission" -> {
+                        if (Build.VERSION.SDK_INT < 33 ||
+                            hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        ) {
+                            result.success(true)
+                        } else if (pendingNotifPermission != null) {
+                            result.error("BUSY", "في طلب صلاحية شغّال", null)
+                        } else {
+                            pendingNotifPermission = result
+                            ActivityCompat.requestPermissions(
+                                this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS
+                            )
+                        }
+                    }
+                    "requestStoragePermission" -> {
+                        if (GallerySaver.canSave(this)) {
+                            result.success(true)
+                        } else if (pendingStoragePermission != null) {
+                            result.error("BUSY", "في طلب صلاحية شغّال", null)
+                        } else {
+                            pendingStoragePermission = result
+                            ActivityCompat.requestPermissions(
+                                this, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), REQUEST_STORAGE
+                            )
+                        }
+                    }
+                    "freeBytes" -> {
+                        val path = call.argument<String>("path") ?: cacheDir.absolutePath
+                        result.success(
+                            try { android.os.StatFs(path).availableBytes } catch (_: Exception) { -1L }
+                        )
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, "com.ayahstudio.app/export/status")
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    exportStatusSink = events
+                    ExportHub.addListener(exportListener)
+                }
+                override fun onCancel(arguments: Any?) {
+                    ExportHub.removeListener(exportListener)
+                    exportStatusSink = null
+                }
+            })
+    }
+
+    /** إعادة محاولة الحفظ بالمعرض (مثلاً بعد ما المستخدم أعطى صلاحية التخزين). */
+    private fun saveLastToGallery(result: MethodChannel.Result) {
+        val st = ExportHub.status
+        if (st["phase"] != "done") {
+            result.error("NO_OUTPUT", "ما في فيديو جاهز", null)
+            return
+        }
+        if (st["savedToGallery"] == true) {
+            result.success(true)
+            return
+        }
+        val path = st["outputPath"] as? String
+        if (path == null || !File(path).exists()) {
+            result.error("NO_OUTPUT", "ملف الفيديو مش موجود", null)
+            return
+        }
+        val name = File(path).name.let { if (it.startsWith("AyahStudio")) it else "AyahStudio_$it" }
+        audioExecutor.execute {
+            try {
+                val saved = GallerySaver.save(this, File(path), name) {}
+                ExportHub.update(
+                    st + mapOf(
+                        "savedToGallery" to true,
+                        "contentUri" to saved.uri.toString(),
+                        "galleryPath" to saved.displayPath,
+                    )
+                )
+                runOnUiThread { result.success(true) }
+            } catch (e: Exception) {
+                runOnUiThread { result.error("SAVE", e.message ?: e.toString(), null) }
+            }
+        }
     }
 
     // =====================================================================
@@ -312,6 +459,18 @@ class MainActivity : FlutterActivity() {
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_NOTIFICATIONS) {
+            val r = pendingNotifPermission ?: return
+            pendingNotifPermission = null
+            r.success(grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+            return
+        }
+        if (requestCode == REQUEST_STORAGE) {
+            val r = pendingStoragePermission ?: return
+            pendingStoragePermission = null
+            r.success(grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+            return
+        }
         if (requestCode != REQUEST_CAMERA_PERMS) return
         val result = pendingPermissionResult ?: return
         pendingPermissionResult = null

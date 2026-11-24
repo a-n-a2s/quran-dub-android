@@ -5,13 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:video_player/video_player.dart';
 
+import '../export/export_request.dart';
 import '../overlay/ayah_font.dart';
 import '../overlay/overlay_frame.dart';
+import '../overlay/overlay_style.dart';
 import '../overlay/overlay_timeline.dart';
 import '../overlay/playback_clock.dart';
 import '../pipeline/project_input.dart';
 import '../pipeline/recitation_segment.dart';
 import '../platform/video_info.dart';
+import 'export_screen.dart';
 
 /// معاينة الفيديو مع النص المتزامن (يوم 7). الفيديو (أو الفيديو + ملف تلاوة
 /// منفصل) بيشتغل، والنص بيتبدّل حسب توقيت كل مقطع بنفس المقاسات اللي رح
@@ -154,6 +157,29 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
     _time.value = to.inMicroseconds / 1e6;
   }
 
+  /// شكل النص الحالي بالمعاينة = اللي بينحرق بالتصدير.
+  OverlayStyle get _style => OverlayStyle(
+        tafsirMode: _tafsirMode,
+        font: _font,
+        color: _color,
+        shadow: _shadow,
+      );
+
+  Future<void> _openExport() async {
+    final all = [_video!, if (_audio != null) _audio!];
+    await Future.wait([for (final c in all) c.pause()]);
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ExportScreen(
+        request: ExportRequest(
+          input: widget.input,
+          segments: widget.segments,
+          style: _style,
+        ),
+      ),
+    ));
+  }
+
   @override
   void dispose() {
     _ticker.dispose();
@@ -167,7 +193,17 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('معاينة النص فوق الفيديو')),
+      appBar: AppBar(
+        title: const Text('معاينة النص فوق الفيديو'),
+        actions: [
+          // يوم 8: التصدير بنفس اختيارات المعاينة (التفسير، الخط، اللون، الظل).
+          TextButton.icon(
+            onPressed: _ready ? _openExport : null,
+            icon: const Icon(Icons.ios_share),
+            label: const Text('تصدير'),
+          ),
+        ],
+      ),
       body: _error != null
           ? Padding(padding: const EdgeInsets.all(16), child: Text(_error!))
           : !_ready
