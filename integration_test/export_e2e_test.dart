@@ -115,6 +115,11 @@ void main() {
         const JsonEncoder.withIndent('  ').convert(summary));
     // ignore: avoid_print
     print('E2E_SUMMARY ${jsonEncode(summary)}');
+    // الـ CI بيسحب e2e_out قبل ما flutter test يشيل التطبيق.
+    File('${outDir.path}/DONE_WRITING').writeAsStringSync('1');
+    for (var i = 0; i < 180 && !File('${outDir.path}/PULLED').existsSync(); i++) {
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
     expect(allOk, isTrue, reason: const JsonEncoder.withIndent(' ').convert(summary));
   }, timeout: const Timeout(Duration(minutes: 45)));
 }
@@ -156,8 +161,28 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
         },
       ),
     ));
+    if (c['cancel'] == true) {
+      // إلغاء بنص الترميز: الزر نفسه بالشاشة.
+      await Future<void>.delayed(const Duration(seconds: 8));
+      await tester.tap(find.text('إلغاء'));
+    } else if (c['background'] == true) {
+      // الـ CI بيضغط Home (التطبيق بالخلفية) وبيفحص الخدمة والإشعار، وبعدين
+      // بيرجّع التطبيق (tool/e2e/run_export_e2e.sh).
+      await Future<void>.delayed(const Duration(seconds: 4));
+      File('$outDir/GO_HOME').writeAsStringSync(name);
+    }
     final (status, plan, workDir) =
         await done.future.timeout(const Duration(minutes: 8));
+    if (c['cancel'] == true) {
+      result['status'] = status.phase.name;
+      if (status.phase != ExportPhase.cancelled) {
+        problems.add('الإلغاء ما اشتغل: ${status.phase.name}');
+      }
+      if (plan != null && File(plan.outputPath).existsSync()) {
+        problems.add('الملف المؤقت لسا موجود بعد الإلغاء');
+      }
+      return result..['problems'] = problems..['ok'] = problems.isEmpty;
+    }
     result['status'] = status.phase.name;
     result['elapsedMs'] = status.elapsedMs;
     result['encoder'] = status.videoEncoder;
@@ -308,11 +333,12 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
     }
   } catch (e, st) {
     problems.add('استثناء: $e\n$st');
+  } finally {
+    // بين الحالات: نرجع شاشة فاضية.
+    await tester.pumpWidget(const SizedBox.shrink());
   }
   result['problems'] = problems;
   result['ok'] = problems.isEmpty;
-  // بين الحالات: نرجع شاشة فاضية.
-  await tester.pumpWidget(const SizedBox.shrink());
   return result;
 }
 

@@ -26,12 +26,13 @@ mk square_light.mp4 1080x1080 "$light"
 mk land_for_rot.mp4 1920x1080 "$dark"
 ffmpeg -hide_banner -loglevel error -y -display_rotation:v:0 90 -i land_for_rot.mp4 -c copy rot90_dark.mp4
 rm land_for_rot.mp4
-# أبعاد فردية (libx264 ما بيقبلها بـ 4:2:0، وVP9 الـ software على المحاكي
-# رفضها؛ فـ VP8 + Opus بـ WebM): الناتج لازم يطلع 1080x1920 (قص بكسل).
-ffmpeg -hide_banner -loglevel error -y \
-  -f lavfi -i "$(printf "$dark" 1081x1921),format=yuv420p" -f lavfi -i "$tone" \
-  -c:v libvpx -deadline realtime -cpu-used 8 -b:v 4M -auto-alt-ref 0 \
-  -c:a libopus -b:a 96k -shortest odd_dark.webm
+# أبعاد فردية 1081x1921: H.264 مرمّز 1082x1922 مع قص بالـ SPS (frame cropping)،
+# زي ما بيصير بفيديوهات معدّلة. (مكتبة x264 ما بتقبل أبعاد فردية مباشرة، ومفكك
+# VP8/VP9 تبع المحاكي رفضها.) الناتج لازم يطلع 1080x1920.
+mk odd_coded.mp4 1082x1922 "$dark"
+ffmpeg -hide_banner -loglevel error -y -i odd_coded.mp4 -c copy \
+  -bsf:v h264_metadata=crop_right=1:crop_bottom=1 odd_dark.mp4
+rm odd_coded.mp4
 # ملف تلاوة منفصل (أطول من الفيديو: لازم ينقص على مدته).
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "sine=f=660:sample_rate=44100:d=10" \
   -c:a aac -b:a 128k recite.m4a
@@ -44,11 +45,13 @@ cat > cases.json <<'J'
   {"name": "landscape_white_shadow", "file": "landscape_dark.mp4", "color": "white", "shadow": true},
   {"name": "square_black", "file": "square_light.mp4", "color": "black"},
   {"name": "rotated90_white", "file": "rot90_dark.mp4", "color": "white"},
-  {"name": "odd_1081x1921_vp8", "file": "odd_dark.webm", "color": "white", "shadow": true},
+  {"name": "odd_1081x1921_h264crop", "file": "odd_dark.mp4", "color": "white", "shadow": true},
+  {"name": "cancel", "file": "portrait_dark.mp4", "color": "white", "cancel": true},
+  {"name": "background_home", "file": "landscape_dark.mp4", "color": "white", "background": true},
   {"name": "external_audio_amiri_full", "file": "portrait_dark.mp4", "audio": "recite.m4a", "color": "white", "font": "amiriQuran", "tafsir": "fullUnderEachPart"}
 ]
 J
-for f in *.mp4 *.webm; do
+for f in *.mp4; do
   echo "== $f"; ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate:stream_side_data=rotation -of compact "$f"
 done
 ls -la

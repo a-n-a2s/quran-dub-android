@@ -25,13 +25,39 @@ for f in "$CLIPS"/*; do
 done
 adb shell run-as $PKG touch files/e2e_in/READY
 adb shell run-as $PKG ls -la files/e2e_in
+# حالة "background_home": لما التجربة تطلب، Home → فحص الخدمة والإشعار → رجوع.
+(
+  for i in $(seq 1 3600); do
+    kill -0 $PID 2>/dev/null || break
+    if adb shell run-as $PKG ls files/e2e_out/GO_HOME >/dev/null 2>&1; then
+      adb shell run-as $PKG rm files/e2e_out/GO_HOME
+      adb shell input keyevent KEYCODE_HOME
+      sleep 10
+      {
+        echo "== services (app in background)"
+        adb shell dumpsys activity services $PKG | grep -E "ServiceRecord|isForeground|foregroundServiceType|foregroundId" || true
+        echo "== top activity"
+        adb shell dumpsys activity activities | grep -E "topResumedActivity|mResumedActivity" | head -3 || true
+        echo "== notifications"
+        adb shell dumpsys notification --noredact | grep -E "pkg=$PKG|android.title=|android.text=|android.progress=" | head -20 || true
+      } > "$OUT/background_check.txt" 2>&1
+      sleep 5
+      adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+    fi
+    if adb shell run-as $PKG ls files/e2e_out/DONE_WRITING >/dev/null 2>&1; then
+      adb shell run-as $PKG rm files/e2e_out/DONE_WRITING
+      adb exec-out run-as $PKG tar c files/e2e_out > "$OUT/e2e_out.tar" 2>/dev/null
+      tar xf "$OUT/e2e_out.tar" -C "$OUT" && rm "$OUT/e2e_out.tar" && echo "سحبنا e2e_out" || echo "فشل سحب e2e_out"
+      adb shell run-as $PKG touch files/e2e_out/PULLED
+    fi
+    sleep 1
+  done
+) &
 wait $PID
 CODE=$?
 cat "$OUT/flutter_test.log" | grep -v "^I/flutter.*E2E_SUMMARY" | tail -200
-# النتائج والصور (لو التطبيق لسا منزّل).
-adb exec-out run-as $PKG tar c files/e2e_out > "$OUT/e2e_out.tar" 2>/dev/null && \
-  tar xf "$OUT/e2e_out.tar" -C "$OUT" && rm "$OUT/e2e_out.tar" || echo "ما قدرنا نسحب e2e_out"
 adb pull /sdcard/Movies/AyahStudio "$OUT/gallery" >/dev/null 2>&1 || echo "ما في Movies/AyahStudio"
 adb logcat -d -s AyahExport:* Transformer:* MediaCodec:* > "$OUT/logcat_export.txt" 2>/dev/null || true
+cat "$OUT/background_check.txt" 2>/dev/null || true
 grep -h "E2E_CASE" "$OUT/flutter_test.log" | sed 's/.*E2E_CASE //' > "$OUT/cases.jsonl" || true
 exit $CODE
