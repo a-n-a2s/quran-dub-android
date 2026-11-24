@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
@@ -14,6 +16,7 @@ import '../overlay/overlay_style.dart';
 import '../overlay/overlay_templates.dart';
 import '../overlay/overlay_timeline.dart';
 import '../overlay/playback_clock.dart';
+import '../overlay/snap_guides.dart';
 import '../pipeline/project_input.dart';
 import '../pipeline/recitation_segment.dart';
 import '../platform/video_info.dart';
@@ -115,6 +118,15 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   OverlayElement? _dragEl;
   Offset _dragStart = Offset.zero;
   double _baseCx = 0, _baseTop = 0;
+  Size _dragSize = Size.zero;
+  bool _pinching = false;
+  Map<OverlayElement, double> _pinchBase = {};
+
+  /// خطوط الإرشاد: بتبيّن بس وقت السحب أو التكبير بإصبعين.
+  final ValueNotifier<List<SnapGuide>> _guides = ValueNotifier(const []);
+
+  /// true = تكبير/تصغير كل العناصر مع بعض بنفس النسبة، false = العنصر المختار بس.
+  bool _linkSizes = false;
 
   final TextEditingController _reciterCtl = TextEditingController();
 
@@ -259,6 +271,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     _video?.dispose();
     _audio?.dispose();
     _time.dispose();
+    _guides.dispose();
     _reciterCtl.dispose();
     super.dispose();
   }
@@ -317,37 +330,102 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     return null;
   }
 
+  /// زي ستوري إنستغرام: الضغطة الواضحة بس بتحدد عنصر (أو بتلغي التحديد لو
+  /// ضغطت مكان فاضي). بعد التحديد، السحب من أي مكان بالشاشة بيحرّك العنصر
+  /// المحدد، والإصبعين بيكبّروه/بيصغّروه، بدون ما تلمس العنصر نفسه.
   void _onTapUp(TapUpDetails d) {
     final p = _toVideo(d.globalPosition);
     setState(() => _selected = p == null ? null : _hit(p));
   }
 
-  void _onPanStart(DragStartDetails d) {
-    if (!_can) return;
-    final p = _toVideo(d.globalPosition);
-    if (p == null) return;
-    final hit = _hit(p);
-    if (hit == null) return;
-    final r = _rectOf(hit);
-    if (r == null) return;
-    final a = _style.layout[hit].anchor;
-    _dragEl = hit;
-    _dragStart = p;
-    _baseCx = a != null ? a.cx * _w : r.center.dx;
-    _baseTop = a != null ? a.top * _h : r.top;
-    setState(() => _selected = hit);
+  List<OverlayElement> get _sizable => [
+        for (final e in OverlayElement.values)
+          if (_style.layout.isEnabled(e) && e.available) e
+      ];
+
+  void _applyScales(Map<OverlayElement, double> scales) {
+    var l = _style.layout;
+    scales.forEach((e, v) => l = l.update(e, (p) => p.copyWith(scale: clampScale(v))));
+    _setStyle(_style.copyWith(layout: l));
   }
 
-  void _onPanUpdate(DragUpdateDetails d) {
+  /// تغيير حجم [e] لـ [v]: لو "الكل مع بعض" كل العناصر بتتضرب بنفس النسبة.
+  void _scaleTo(OverlayElement e, double v) {
+    final old = _style.layout[e].scale;
+    if (!_linkSizes || old <= 0) {
+      _applyScales({e: v});
+      return;
+    }
+    final f = v / old;
+    _applyScales({for (final x in _sizable) x: _style.layout[x].scale * f});
+  }
+
+  void _setGuides(List<SnapGuide> g) {
+    if (g.isNotEmpty && g.length != _guides.value.length) {
+      HapticFeedback.selectionClick();
+    }
+    _guides.value = g;
+  }
+
+  double get _snapThreshold => (_w < _h ? _w : _h) * 0.018;
+
+  void _onScaleStart(ScaleStartDetails d) {
+    final e = _selected;
+    if (!_can || e == null || !_style.layout.isEnabled(e)) return;
+    final p = _toVideo(d.focalPoint);
+    final r = _rectOf(e);
+    if (p == null || r == null) return;
+    final a = _style.layout[e].anchor;
+    _dragEl = e;
+    _dragStart = p;
+    _dragSize = r.size;
+    _baseCx = a != null ? a.cx * _w : r.center.dx;
+    _baseTop = a != null ? a.top * _h : r.top;
+    _pinching = false;
+    _pinchBase = {for (final x in _sizable) x: _style.layout[x].scale};
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails d) {
     final e = _dragEl;
-    final p = _toVideo(d.globalPosition);
+    final p = _toVideo(d.focalPoint);
     if (e == null || p == null) return;
-    final anchor = anchorFromPixels(
-        _baseCx + (p.dx - _dragStart.dx), _baseTop + (p.dy - _dragStart.dy), _w, _h);
+    final video = Size(_w.toDouble(), _h.toDouble());
+    List<Rect> others() => [
+          for (final x in OverlayElement.values)
+            if (x != e && _style.layout.isEnabled(x))
+              if (_rectOf(x) case final r?) r
+        ];
+    if (d.pointerCount >= 2) {
+      _pinching = true;
+      final f = d.scale;
+      if (_linkSizes) {
+        _applyScales({for (final x in _pinchBase.keys) x: _pinchBase[x]! * f});
+      } else if (_pinchBase.containsKey(e)) {
+        _applyScales({e: _pinchBase[e]! * f});
+      }
+      final r = _rectOf(e);
+      if (r != null) {
+        _setGuides(snapRect(r,
+                video: video, others: others(), threshold: _snapThreshold, snap: false)
+            .guides);
+      }
+      return;
+    }
+    if (_pinching) return; // رفع إصبع وسط التكبير: ما نحرّك فجأة.
+    final cx = _baseCx + (p.dx - _dragStart.dx);
+    final top = _baseTop + (p.dy - _dragStart.dy);
+    final raw = Rect.fromLTWH(cx - _dragSize.width / 2, top, _dragSize.width, _dragSize.height);
+    final s = snapRect(raw, video: video, others: others(), threshold: _snapThreshold);
+    _setGuides(s.guides);
+    final anchor = anchorFromPixels(s.rect.center.dx, s.rect.top, _w, _h);
     _setPlacement(e, (pl) => pl.copyWith(anchor: anchor));
   }
 
-  void _onPanEnd([Object? _]) => _dragEl = null;
+  void _onScaleEnd([Object? _]) {
+    _dragEl = null;
+    _pinching = false;
+    _guides.value = const [];
+  }
 
   // ---------------------------------------------------------------------
   // البناء
@@ -391,10 +469,9 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapUp: _onTapUp,
-            onPanStart: _onPanStart,
-            onPanUpdate: _onPanUpdate,
-            onPanEnd: _onPanEnd,
-            onPanCancel: _onPanEnd,
+            onScaleStart: _onScaleStart,
+            onScaleUpdate: _onScaleUpdate,
+            onScaleEnd: _onScaleEnd,
             child: Container(
               color: Colors.black,
               alignment: Alignment.center,
@@ -419,6 +496,12 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                           style: _style,
                           surahName: _surahLookup,
                           elementKeys: _keys,
+                        ),
+                      ),
+                      // خطوط الإرشاد (بتبيّن وقت السحب/التكبير بس).
+                      IgnorePointer(
+                        child: CustomPaint(
+                          painter: _GuidesPainter(guides: _guides, unit: unit),
                         ),
                       ),
                       // إطار ذهبي حوالين العنصر المختار.
@@ -632,7 +715,19 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
               _can ? (s) => _setStyle(_style.copyWith(tafsirMode: s.first)) : null,
         ),
         const SizedBox(height: 8),
-        const Text('الأحجام (كل عنصر لحاله)'),
+        Row(
+          children: [
+            const Expanded(child: Text('الأحجام')),
+            FilterChip(
+              avatar: Icon(_linkSizes ? Icons.link : Icons.link_off, size: 18),
+              label: Text(_linkSizes ? 'الكل مع بعض' : 'عنصر لحاله'),
+              selected: _linkSizes,
+              onSelected: _can ? (v) => setState(() => _linkSizes = v) : null,
+            ),
+          ],
+        ),
+        const _Note('اضغط على عنصر بالفيديو لتحديده، وبعدين اسحب من أي مكان لتحريكه '
+            'أو استعمل إصبعين لتكبيره وتصغيره. "الكل مع بعض" بيكبّر ويصغّر كل العناصر بنفس النسبة.'),
         for (final e in OverlayElement.values)
           if (layout.isEnabled(e) && e.available)
             Row(
@@ -645,7 +740,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                     max: ElementPlacement.maxScale,
                     divisions: 20,
                     label: '${(layout[e].scale * 100).round()}٪',
-                    onChanged: _can ? (v) => _setPlacement(e, (p) => p.copyWith(scale: v)) : null,
+                    onChanged: _can ? (v) => _scaleTo(e, v) : null,
                   ),
                 ),
                 SizedBox(
@@ -924,4 +1019,30 @@ class _SelectionPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SelectionPainter old) => true;
+}
+
+/// خطوط الإرشاد: وسط الفيديو بالذهبي، والمحاذاة مع عناصر ثانية بالسماوي.
+class _GuidesPainter extends CustomPainter {
+  final ValueListenable<List<SnapGuide>> guides;
+  final double unit;
+
+  _GuidesPainter({required this.guides, required this.unit}) : super(repaint: guides);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = unit * 0.003 < 1.5 ? 1.5 : unit * 0.003;
+    for (final g in guides.value) {
+      final paint = Paint()
+        ..color = g.kind == GuideKind.center ? _gold : Colors.cyanAccent
+        ..strokeWidth = w;
+      if (g.axis == GuideAxis.vertical) {
+        canvas.drawLine(Offset(g.position, 0), Offset(g.position, size.height), paint);
+      } else {
+        canvas.drawLine(Offset(0, g.position), Offset(size.width, g.position), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _GuidesPainter old) => true;
 }
