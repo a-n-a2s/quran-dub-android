@@ -161,7 +161,7 @@ class _OverlayContent extends StatelessWidget {
     }
     if (w == null) return null;
     w = _backdrop(w, p.scale);
-    final k = withKeys ? elementKeys?[e] : null;
+    final GlobalKey? k = withKeys ? (elementKeys == null ? null : elementKeys![e]) : null;
     return k == null ? w : KeyedSubtree(key: k, child: w);
   }
 

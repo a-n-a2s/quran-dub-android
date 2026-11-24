@@ -259,7 +259,7 @@ void main() {
 
     test('كل العناصر مسحوبة: الشريط بيغطي كل واحد منها ولا يطلع من الفيديو', () {
       var l = OverlayLayout.reference;
-      var y = 0.05;
+      var y = 0.0;
       for (final e in OverlayElement.values) {
         l = l.update(e, (p) => p.copyWith(enabled: true, anchor: ElementAnchor(0.4, y)));
         y += 0.17;
