@@ -27,6 +27,10 @@ on:
       - ".github/workflows/export-e2e.yml"
   workflow_dispatch: {}
 
+# لنشر صور المقارنة على فرع e2e-results (بتنشاف بالمتصفح أو git).
+permissions:
+  contents: write
+
 jobs:
   export-e2e:
     name: Export on Android 14 emulator
@@ -104,6 +108,27 @@ jobs:
               probs = "; ".join(r.get("problems", [])) or "✅"
               print(f'| {r["name"]} | {r.get("source","")} | {r.get("output","")} | {(r.get("elapsedMs") or 0)/1000:.1f}s | {mt:.1f} | {mv:.1f} | {mo:.1f} | {rows} | {probs[:300]} |')
           PY
+
+      # صور المقارنة (بدون الفيديوهات) على فرع e2e-results، لأنه artifacts
+      # بتنزل zip بس. كل تشغيل بيبدّل اللي قبله.
+      - name: نشر صور المقارنة (فرع e2e-results)
+        if: always()
+        continue-on-error: true
+        run: |
+          set -e
+          d=$(mktemp -d)
+          mkdir -p "$d/out"
+          find build/e2e_out -name '*.png' -exec cp {} "$d/out/" \; || true
+          cp build/e2e_out/cases.jsonl "$d/out/" 2>/dev/null || true
+          find build/e2e_out -name 'summary.json' -exec cp {} "$d/out/" \; || true
+          cd "$d/out"
+          git init -q -b e2e-results
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          echo "run ${{ github.run_id }} sha ${{ github.sha }}" > RUN.txt
+          git add -A
+          git commit -qm "e2e run ${{ github.run_number }} (${{ github.sha }})"
+          git push -fq "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" e2e-results
 
       - name: Upload e2e results
         if: always()

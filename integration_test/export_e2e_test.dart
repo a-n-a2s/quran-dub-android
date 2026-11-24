@@ -8,6 +8,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -266,19 +267,30 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
         ..setAll(sw * sh * 4, shrink(outF, W, H, f));
       final png = await encodePng(both, sw, sh * 2);
       File('$outDir/${name}_t${t.toStringAsFixed(2)}.png').writeAsBytesSync(png);
+      // بدقة كاملة: شريط النص (المتوقع = المعاينة فوق الأصل، والناتج) لمقطع
+      // واحد بكل حالة (الثاني لو موجود: آخر جزء من 50:27 مع علامة الرقم).
+      if (i == math.min(1, tl.items.length - 1) && alpha > 0.95 && times.indexOf((i, t)) == i) {
+        final bytes = b.height * W * 4, off = b.top * W * 4;
+        File('$outDir/${name}_band_expected.png').writeAsBytesSync(await encodePng(
+            Uint8List.sublistView(expected, off, off + bytes), W, b.height));
+        File('$outDir/${name}_band_output.png').writeAsBytesSync(await encodePng(
+            Uint8List.sublistView(outF, off, off + bytes), W, b.height));
+      }
 
       if (alpha > 0.95) {
         if (chk.maeTextVsSource < 25) {
           problems.add('t=$t: النص مش ظاهر بالناتج (فرق عن الأصل ${chk.maeTextVsSource.toStringAsFixed(1)})');
         }
-        if (chk.maeText > 30 || chk.maeText > 0.45 * chk.maeTextVsSource) {
+        // ترميز H.264 بيغبّش أطراف الحروف الرفيعة شوي (خصوصاً الكتلة الطويلة
+        // المصغّرة)، فالحد نسبي من فرق النص عن الأصل.
+        if (chk.maeText > 40 || chk.maeText > 0.3 * chk.maeTextVsSource) {
           problems.add('t=$t: النص مختلف عن المعاينة (MAE ${chk.maeText.toStringAsFixed(1)})');
         }
         if (chk.expectedFirstRow >= 0 &&
             (chk.outFirstRow - chk.expectedFirstRow).abs() > 6) {
           problems.add('t=$t: أول سطر عند ${chk.outFirstRow} بدل ${chk.expectedFirstRow}');
         }
-      } else if (chk.maeText > 30) {
+      } else if (chk.maeText > 40) {
         problems.add('t=$t (fade ${alpha.toStringAsFixed(2)}): MAE ${chk.maeText.toStringAsFixed(1)}');
       }
       if (chk.maeOutside > 8) {
