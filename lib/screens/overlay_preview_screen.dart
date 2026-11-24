@@ -57,6 +57,10 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
 
   /// ملاحظة قصيرة لما اللون انختار تلقائياً.
   String? _colorNote;
+
+  /// ظل للنص بلون عكسه (نص أبيض → ظل أسود، ونص أسود → ظل أبيض). المستخدم
+  /// بيقرر (طلب أنس).
+  bool _shadow = false;
   String? _error;
   bool _ready = false;
 
@@ -204,6 +208,7 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
                         tafsirMode: _tafsirMode,
                         font: _font,
                         color: _color,
+                        shadow: _shadow,
                       ),
                     ),
                   ],
@@ -212,7 +217,11 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
             ),
           ),
         ),
-        _Controls(
+        // الأزرار بتاخد لحد 45% من الشاشة وبتنسحب (الجوالات الصغيرة).
+        ConstrainedBox(
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.45),
+          child: _Controls(
           playing: master.value.isPlaying,
           position: pos,
           duration: dur,
@@ -229,9 +238,12 @@ class _OverlayPreviewScreenState extends State<OverlayPreviewScreen>
             _colorTouched = true;
             _colorNote = null;
           }),
+          shadow: _shadow,
+          onShadow: (v) => setState(() => _shadow = v),
           usingExternalAudio: _audio != null,
           timeListenable: _time,
           timeline: _timeline,
+        ),
         ),
       ],
     );
@@ -251,6 +263,8 @@ class _Controls extends StatelessWidget {
   final OverlayTextColor color;
   final String? colorNote;
   final ValueChanged<OverlayTextColor> onColor;
+  final bool shadow;
+  final ValueChanged<bool> onShadow;
   final bool usingExternalAudio;
   final ValueListenable<double> timeListenable;
   final OverlayTimeline timeline;
@@ -268,6 +282,8 @@ class _Controls extends StatelessWidget {
     required this.color,
     required this.colorNote,
     required this.onColor,
+    required this.shadow,
+    required this.onShadow,
     required this.usingExternalAudio,
     required this.timeListenable,
     required this.timeline,
@@ -284,7 +300,7 @@ class _Controls extends StatelessWidget {
     final maxMs = duration.inMilliseconds.toDouble();
     return SafeArea(
       top: false,
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -373,6 +389,18 @@ class _Controls extends StatelessWidget {
                 child: Text(colorNote!,
                     style: const TextStyle(fontSize: 11, color: Colors.black54)),
               ),
+            // ظل بلون عكس النص (أسود للنص الأبيض، أبيض للنص الأسود).
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              value: shadow,
+              onChanged: onShadow,
+              title: Text(
+                  'ظل ${color == OverlayTextColor.white ? 'أسود' : 'أبيض'} للنص'),
+              secondary: Icon(Icons.text_fields,
+                  color: color.text,
+                  shadows: [Shadow(color: color.shadow, blurRadius: 3)]),
+            ),
           ],
         ),
       ),

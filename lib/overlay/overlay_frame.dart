@@ -28,6 +28,10 @@ enum OverlayTextColor {
   Color get text => this == white ? overlayWhite : overlayBlack;
   Color get bracket => this == white ? overlayGold : overlayBlack;
 
+  /// لون الظل (لو المستخدم شغّله): **عكس لون النص** (طلب أنس): نص أبيض →
+  /// ظل أسود، ونص أسود → ظل أبيض.
+  Color get shadow => this == white ? overlayBlack : overlayWhite;
+
   /// اللون الأوضح فوق خلفية متوسط سطوعها [luma] (0 أسود .. 1 أبيض) ونسبة
   /// البكسلات الفاتحة فيها [brightFraction] (بمنطقة النص).
   static OverlayTextColor forBackground(double luma, double brightFraction) =>
@@ -54,6 +58,10 @@ class AyahOverlayFrame extends StatelessWidget {
   final AyahFont font;
   final OverlayTextColor color;
 
+  /// ظل خلف النص بلون عكس النص ([OverlayTextColor.shadow])، المستخدم بيشغّله
+  /// أو بيطفيه. الافتراضي بدون ظل (زي المقطع المرجعي).
+  final bool shadow;
+
   const AyahOverlayFrame({
     super.key,
     required this.videoWidth,
@@ -62,6 +70,7 @@ class AyahOverlayFrame extends StatelessWidget {
     this.tafsirMode = TafsirMode.split,
     this.font = AyahFont.defaultFont,
     this.color = OverlayTextColor.defaultColor,
+    this.shadow = false,
   });
 
   @override
@@ -96,6 +105,7 @@ class AyahOverlayFrame extends StatelessWidget {
                         tafsirMode: tafsirMode,
                         font: font,
                         color: color,
+                        shadow: shadow,
                       ),
                     ),
                   ),
@@ -114,6 +124,7 @@ class _TextBlock extends StatelessWidget {
   final TafsirMode tafsirMode;
   final AyahFont font;
   final OverlayTextColor color;
+  final bool shadow;
 
   const _TextBlock({
     required this.segment,
@@ -121,7 +132,11 @@ class _TextBlock extends StatelessWidget {
     required this.tafsirMode,
     required this.font,
     required this.color,
+    required this.shadow,
   });
+
+  /// ظلين: واحد قريب (حد واضح) وواحد أنعم (بيفصل النص عن الخلفية).
+  List<Shadow>? get _shadows => shadow ? overlayShadows(metrics, color) : null;
 
   @override
   Widget build(BuildContext context) {
@@ -147,6 +162,7 @@ class _TextBlock extends StatelessWidget {
                 fontSize: m.tafsirFontSize,
                 height: m.tafsirLineHeight,
                 color: color.text,
+                shadows: _shadows,
                 decoration: TextDecoration.none,
               ),
             ),
@@ -170,6 +186,7 @@ class _TextBlock extends StatelessWidget {
           fontSize: m.ayahFontSize,
           height: m.tafsirLineHeight,
           color: color.text,
+          shadows: _shadows,
           decoration: TextDecoration.none,
         ),
       );
@@ -180,6 +197,7 @@ class _TextBlock extends StatelessWidget {
       fontSize: m.ayahFontSize,
       height: m.ayahLineHeight,
       color: color.text,
+      shadows: _shadows,
       decoration: TextDecoration.none,
     );
     final bracket = base.copyWith(
@@ -196,7 +214,7 @@ class _TextBlock extends StatelessWidget {
             WidgetSpan(
               alignment: PlaceholderAlignment.middle,
               child: _AyahNumberCircle(
-                  number: segment.ayah!, metrics: m, color: color.text),
+                  number: segment.ayah!, metrics: m, color: color, shadow: shadow),
             ),
           TextSpan(text: ayahCloseBracket, style: bracket),
         ],
@@ -212,9 +230,13 @@ class _TextBlock extends StatelessWidget {
 class _AyahNumberCircle extends StatelessWidget {
   final int number;
   final OverlayMetrics metrics;
-  final Color color;
+  final OverlayTextColor color;
+  final bool shadow;
   const _AyahNumberCircle(
-      {required this.number, required this.metrics, required this.color});
+      {required this.number,
+      required this.metrics,
+      required this.color,
+      required this.shadow});
 
   @override
   Widget build(BuildContext context) {
@@ -228,7 +250,18 @@ class _AyahNumberCircle extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          border: Border.all(color: color, width: m.circleBorder),
+          border: Border.all(color: color.text, width: m.circleBorder),
+          // الظل حوالين الدائرة نفسها (حلقة ناعمة بلون الظل، بدون تعبئة).
+          boxShadow: shadow
+              ? [
+                  BoxShadow(
+                    color: color.shadow.withValues(alpha: 0.55),
+                    blurRadius: m.shadowBlur,
+                    spreadRadius: m.circleBorder,
+                    blurStyle: BlurStyle.outer,
+                  ),
+                ]
+              : null,
         ),
         // رقم من 3 خانات (آية 100+) بيصغّر ليتسع بالدائرة.
         child: Padding(
@@ -242,7 +275,8 @@ class _AyahNumberCircle extends StatelessWidget {
                 fontFamily: tafsirFontFamily,
                 fontSize: m.numberFontSize,
                 height: 1,
-                color: color,
+                color: color.text,
+                shadows: shadow ? overlayShadows(m, color) : null,
                 decoration: TextDecoration.none,
               ),
             ),
@@ -252,3 +286,16 @@ class _AyahNumberCircle extends StatelessWidget {
     );
   }
 }
+
+/// ظلال النص بلون عكس النص، بمقاسات نسبية من الوحدة (نفس الشكل بكل الأبعاد).
+List<Shadow> overlayShadows(OverlayMetrics m, OverlayTextColor color) => [
+      Shadow(
+        color: color.shadow.withValues(alpha: 0.9),
+        offset: Offset(0, m.shadowOffset),
+        blurRadius: m.shadowBlur,
+      ),
+      Shadow(
+        color: color.shadow.withValues(alpha: 0.6),
+        blurRadius: m.shadowBlur * 2.5,
+      ),
+    ];

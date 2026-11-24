@@ -39,6 +39,10 @@ class OverlayMetrics {
   /// أقصى عرض للنص.
   final double maxTextWidth;
 
+  /// ظل النص (لما المستخدم يشغّله، يوم 7): إزاحة لتحت + نعومة الظل.
+  final double shadowOffset;
+  final double shadowBlur;
+
   const OverlayMetrics._({
     required this.width,
     required this.height,
@@ -55,6 +59,8 @@ class OverlayMetrics {
     required this.top,
     required this.bottomLimit,
     required this.maxTextWidth,
+    required this.shadowOffset,
+    required this.shadowBlur,
   });
 
   // نسب من إطار المرجع (عرض 450).
@@ -69,6 +75,8 @@ class OverlayMetrics {
   static const double circleBorderRatio = 1.5 / _refW;
   static const double numberSizeRatio = 12 / _refW;
   static const double circleMarginRatio = 6 / _refW;
+  static const double shadowOffsetRatio = 1 / _refW;
+  static const double shadowBlurRatio = 2.5 / _refW;
 
   /// أول سطر الآية عند 61% من ارتفاع الفيديو (مقطع أنس المرجعي).
   static const double topFraction = 0.61;
@@ -100,6 +108,8 @@ class OverlayMetrics {
       top: height * topFraction,
       bottomLimit: height * (1 - bottomMarginFraction),
       maxTextWidth: maxW,
+      shadowOffset: u * shadowOffsetRatio,
+      shadowBlur: u * shadowBlurRatio,
     );
   }
 

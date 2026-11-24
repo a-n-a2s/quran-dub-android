@@ -34,7 +34,8 @@ OverlayCue cue(RecitationSegment s, [double opacity = 1]) =>
 Future<void> pump(WidgetTester tester, Size size, OverlayCue? c,
     {TafsirMode mode = TafsirMode.split,
     AyahFont font = AyahFont.kfgqpcHafs,
-    OverlayTextColor color = OverlayTextColor.white}) async {
+    OverlayTextColor color = OverlayTextColor.white,
+    bool shadow = false}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -48,6 +49,7 @@ Future<void> pump(WidgetTester tester, Size size, OverlayCue? c,
         tafsirMode: mode,
         font: font,
         color: color,
+        shadow: shadow,
       ),
     ),
   ));
@@ -180,5 +182,35 @@ void main() {
     expect(OverlayTextColor.forBackground(0.5, 0.3), OverlayTextColor.white);
     expect(OverlayTextColor.forBackground(0.85, 0.95), OverlayTextColor.black);
     expect(OverlayTextColor.forBackground(0.45, 0.6), OverlayTextColor.black);
+  });
+
+  // يوم 7 (طلب أنس): ظل اختياري بلون عكس النص.
+  testWidgets('optional shadow in the opposite color (off by default)',
+      (tester) async {
+    await pump(tester, const Size(1080, 1920), cue(seg()));
+    var ayah = tester.widget<Text>(find.byKey(ayahKey)).textSpan! as TextSpan;
+    expect(ayah.style!.shadows, isNull);
+    expect(tester.widget<Text>(find.byKey(tafsirKey)).style!.shadows, isNull);
+
+    for (final c in OverlayTextColor.values) {
+      await pump(tester, const Size(1080, 1920), cue(seg()),
+          color: c, shadow: true);
+      ayah = tester.widget<Text>(find.byKey(ayahKey)).textSpan! as TextSpan;
+      final opposite =
+          c == OverlayTextColor.white ? overlayBlack : overlayWhite;
+      final shadows = ayah.style!.shadows!;
+      expect(shadows, isNotEmpty);
+      for (final sh in shadows) {
+        expect(sh.color.withValues(alpha: 1), opposite, reason: c.name);
+      }
+      final open = ayah.children!.first as TextSpan;
+      expect(open.style!.shadows, isNotEmpty); // الأقواس كمان
+      final t = tester.widget<Text>(find.byKey(tafsirKey));
+      expect(t.style!.shadows!.first.color.withValues(alpha: 1), opposite);
+      // ولسا ما في خلفية/صندوق (الظل بس).
+      expect(find.descendant(
+              of: find.byType(AyahOverlayFrame), matching: find.byType(ColoredBox)),
+          findsNothing);
+    }
   });
 }
