@@ -42,6 +42,10 @@ class _ExportScreenState extends State<ExportScreen> {
   final OverlayRenderController _renderer = OverlayRenderController();
   ExportStatus _status = ExportStatus.idle;
   ExportPlan? _plan;
+
+  /// التصدير اللي الشاشة بتتابعه (الحالي، أو واحد شغّال من قبل ما تنفتح:
+  /// المستخدم طلع من الشاشة ورجع).
+  String? _activeId;
   String? _workDir;
   StreamSubscription<ExportStatus>? _sub;
   bool _cancelRequested = false;
@@ -56,9 +60,13 @@ class _ExportScreenState extends State<ExportScreen> {
     super.initState();
     _sub = VideoExporter.statusStream.listen(_onStatus, onError: (_) {});
     VideoExporter.status().then((s) {
-      if (!mounted) return;
-      if (s.phase.isRunning && _plan == null) {
-        setState(() => _otherExportRunning = true);
+      if (!mounted || _activeId != null) return;
+      // تصدير لسا شغّال بالخلفية (طلعنا من الشاشة ورجعنا): بنكمّل نتابعه.
+      if (s.phase.isRunning && s.id != null) {
+        setState(() {
+          _activeId = s.id;
+          _status = s;
+        });
       }
     }).catchError((_) {});
     if (widget.autoStart) {
@@ -74,15 +82,15 @@ class _ExportScreenState extends State<ExportScreen> {
 
   void _onStatus(ExportStatus s) {
     if (!mounted) return;
-    final plan = _plan;
-    if (plan == null) {
+    final id = _activeId;
+    if (id == null) {
       // تصدير ثاني (من قبل) لسا شغّال؟
       if (s.phase.isRunning != _otherExportRunning) {
         setState(() => _otherExportRunning = s.phase.isRunning);
       }
       return;
     }
-    if (s.id != plan.id) return;
+    if (s.id != id) return;
     if (s.phase == ExportPhase.idle) return;
     setState(() => _status = s);
     if (s.phase.isFinished) _reportFinished(s);
@@ -96,7 +104,7 @@ class _ExportScreenState extends State<ExportScreen> {
 
   void _fail(ExportErrorKind kind, String detail) {
     final s = ExportStatus(
-        id: _plan?.id,
+        id: _activeId,
         phase: ExportPhase.failed,
         error: kind,
         errorDetail: detail);
@@ -111,6 +119,7 @@ class _ExportScreenState extends State<ExportScreen> {
       _cancelRequested = false;
       _finishedReported = false;
       _plan = null;
+      _activeId = null;
       _prepareMs = null;
     });
     _prepareWatch
@@ -180,6 +189,7 @@ class _ExportScreenState extends State<ExportScreen> {
         return;
       }
       _plan = plan;
+      _activeId = plan.id;
       setState(() => _status = ExportStatus(id: plan.id, phase: ExportPhase.encoding));
       await VideoExporter.start(planPath);
     } on PlatformException catch (e) {

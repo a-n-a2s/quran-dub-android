@@ -232,7 +232,10 @@ class ExportService : Service() {
         } else {
             EditedMediaItemSequence.withVideoFrom(listOf(video))
         }
-        if (p.audioKind != "external") return Composition.Builder(videoSeq).build()
+        // فيديو HDR (كاميرات كثير جوالات): بنحوّله لـ SDR بالـ GPU، لأنه H.264
+        // العادي SDR، وصور النص SDR، والمشاركة (واتساب...) بتتوقع SDR.
+        val hdr = Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL
+        if (p.audioKind != "external") return Composition.Builder(videoSeq).setHdrMode(hdr).build()
 
         val clip = MediaItem.ClippingConfiguration.Builder()
         if (p.durationMs > 0) clip.setEndPositionMs(p.durationMs)
@@ -241,7 +244,9 @@ class ExportService : Service() {
             .setClippingConfiguration(clip.build())
             .build()
         val audio = EditedMediaItem.Builder(audioItem).setRemoveVideo(true).build()
-        return Composition.Builder(videoSeq, EditedMediaItemSequence.withAudioFrom(listOf(audio))).build()
+        return Composition.Builder(videoSeq, EditedMediaItemSequence.withAudioFrom(listOf(audio)))
+            .setHdrMode(hdr)
+            .build()
     }
 
     private val pollProgress = object : Runnable {
