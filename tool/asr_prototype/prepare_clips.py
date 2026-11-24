@@ -143,16 +143,21 @@ def tts(key, cache):
     return x
 
 
+# الضجيج بـ seed ثابت: نفس المقاطع بكل تشغيل، فالأرقام بتتقارن بين تشغيل
+# وتشغيل (قبل يوم 7 كان عشوائي، فنتيجة مقاطع الضجيج الشديد كانت بتتغيّر).
+NOISE_SEED = 20261124
+
+
 def degrade(path, level, out):
     if level == 1:
         flt = ('[0:a]aresample=16000,highpass=f=300,lowpass=f=3400,volume=0.7[v];'
                '[v][1:a]amix=inputs=2:duration=first:normalize=0[o]')
-        noise = 'anoisesrc=color=pink:amplitude=0.02:sample_rate=16000'
+        noise = f'anoisesrc=color=pink:amplitude=0.02:sample_rate=16000:seed={NOISE_SEED}'
     else:
         flt = ('[0:a]aresample=16000,highpass=f=250,lowpass=f=3600,volume=0.6[v];'
                '[v][1:a]amix=inputs=2:duration=first:normalize=0[o]')
         amp = 0.03 if level == 2 else 0.06
-        noise = f'anoisesrc=color=white:amplitude={amp}:sample_rate=16000'
+        noise = f'anoisesrc=color=white:amplitude={amp}:sample_rate=16000:seed={NOISE_SEED}'
     run(['ffmpeg', '-loglevel', 'error', '-y', '-i', path, '-f', 'lavfi', '-i', noise,
          '-filter_complex', flt, '-map', '[o]', '-ac', '1', '-ar', str(SR),
          '-c:a', 'pcm_s16le', out])
