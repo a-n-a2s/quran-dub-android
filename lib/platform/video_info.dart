@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/services.dart';
 
 import '../pipeline/project_input.dart';
@@ -20,6 +22,20 @@ class VideoInfoReader {
       'fps': r['fps'],
       'hasAudioTrack': r['hasAudioTrack'],
     });
+  }
+
+  /// إطار الفيديو بالثانية [timeUs] (ميكروثانية) مستقيم ومصغّر لـ
+  /// [width]×[height]، كبكسلات RGBA (يوم 8: تجربة التصدير بالمحاكي).
+  static Future<Uint8List> frameRgba(
+      String path, int timeUs, int width, int height) async {
+    final r = await _channel.invokeMethod<Uint8List>('frameRgba', {
+      'path': path,
+      'timeUs': timeUs,
+      'width': width,
+      'height': height,
+    });
+    if (r == null) throw const VideoInfoException('ما قدرنا نقرأ إطار');
+    return r;
   }
 
   /// سطوع الفيديو بمنطقة النص (يوم 7، `FrameBrightness.kt`): (متوسط السطوع

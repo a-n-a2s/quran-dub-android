@@ -25,6 +25,11 @@ class OverlayBand {
 
   Map<String, Object?> toJson() => {'top': top, 'height': height};
   @override
+  bool operator ==(Object other) =>
+      other is OverlayBand && other.top == top && other.height == height;
+  @override
+  int get hashCode => Object.hash(top, height);
+  @override
   String toString() => 'شريط $top..$bottom';
 }
 

@@ -40,7 +40,11 @@ androidComponents {
     onVariants(selector().withBuildType("debug")) { variant ->
         variant.packaging.jniLibs.useLegacyPackaging.set(true)
         // Flutter ما بيحط abiFilters على مكتبات الـ plugins بالـ debug.
-        variant.packaging.jniLibs.excludes.addAll(listOf("**/x86_64/**", "**/x86/**"))
+        // يوم 8: تجربة التصدير على محاكي x86_64 بالـ CI (export-e2e.yml) بدها
+        // مكتبات x86_64، فبنتركها لما AYAH_KEEP_X86 موجود.
+        if (System.getenv("AYAH_KEEP_X86") == null) {
+            variant.packaging.jniLibs.excludes.addAll(listOf("**/x86_64/**", "**/x86/**"))
+        }
     }
 }
 

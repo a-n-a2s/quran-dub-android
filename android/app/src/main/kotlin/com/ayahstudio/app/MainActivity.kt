@@ -300,6 +300,25 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
+                    // يوم 8: إطار RGBA (تجربة التصدير بالمحاكي، وصور مصغّرة لاحقاً).
+                    "frameRgba" -> {
+                        val path = call.argument<String>("path")
+                        val timeUs = (call.argument<Number>("timeUs") ?: 0).toLong()
+                        val w = call.argument<Int>("width") ?: 0
+                        val h = call.argument<Int>("height") ?: 0
+                        if (path == null || w <= 0 || h <= 0) {
+                            result.error("ARGS", "path/width/height مطلوبين", null)
+                            return@setMethodCallHandler
+                        }
+                        audioExecutor.execute {
+                            try {
+                                val bytes = FrameGrabber.rgbaAt(path, timeUs, w, h)
+                                runOnUiThread { result.success(bytes) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("FRAME", e.message ?: e.toString(), null) }
+                            }
+                        }
+                    }
                     // يوم 7: سطوع منطقة النص (لاختيار نص أبيض أو أسود تلقائياً).
                     "textBandBrightness" -> {
                         val path = call.argument<String>("path")
