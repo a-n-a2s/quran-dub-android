@@ -183,7 +183,7 @@ class TemplateStore {
   }
 
   /// اسم القارئ بيخص المشروع: ما بينحفظ بالقالب.
-  OverlayStyle _forStore(OverlayStyle s) => s.copyWith(reciterName: '');
+  OverlayStyle _forStore(OverlayStyle s) => s.copyWith(reciterName: '', segmentScales: const {});
 
   String _cleanName(String n) {
     final t = n.trim();

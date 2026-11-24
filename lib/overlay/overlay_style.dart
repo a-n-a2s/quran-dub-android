@@ -109,6 +109,11 @@ class OverlayStyle {
   /// القالب: ما بينحفظ مع القوالب.
   final String reciterName;
 
+  /// أحجام خاصة بمقطع معين (يوم 9، طلب أنس): index المقطع بقائمة المقاطع الأصلية
+  /// ← (عنصر ← معامل الحجم). بتغلب على حجم [layout] العام لهالمقطع بس. بتخص
+  /// المشروع مش القالب، فما بتنحفظ مع القوالب.
+  final Map<int, Map<OverlayElement, double>> segmentScales;
+
   const OverlayStyle({
     this.tafsirMode = TafsirMode.split,
     this.font = AyahFont.defaultFont,
@@ -118,6 +123,7 @@ class OverlayStyle {
     this.background = const OverlayBackground(),
     this.layout = OverlayLayout.reference,
     this.reciterName = '',
+    this.segmentScales = const {},
   });
 
   /// القيمة الافتراضية لما المستخدم يشغّل الظل: بتبيّن بوضوح (مش أضعف من
@@ -125,6 +131,21 @@ class OverlayStyle {
   static const double defaultShadowStrength = 0.7;
 
   bool get shadow => shadowStrength > 0;
+
+  /// الشكل لمقطع رقم [index]: نفس الشكل بس بأحجام ذلك المقطع الخاصة (لو في).
+  /// المعاينة والتصدير بيرسموا فيه.
+  OverlayStyle forSegment(int index) {
+    final o = segmentScales[index];
+    if (o == null || o.isEmpty) return this;
+    var l = layout;
+    o.forEach((e, v) => l = l.update(e, (p) => p.copyWith(scale: v)));
+    return copyWith(layout: l, segmentScales: const {});
+  }
+
+  /// كل التخطيطات الممكنة بالفيديو (العام + كل مقطع إله أحجام خاصة): الشريط
+  /// بيغطي اتحادها.
+  List<OverlayLayout> get allLayouts =>
+      [layout, for (final k in segmentScales.keys) forSegment(k).layout];
 
   OverlayStyle copyWith({
     TafsirMode? tafsirMode,
@@ -135,6 +156,7 @@ class OverlayStyle {
     OverlayBackground? background,
     OverlayLayout? layout,
     String? reciterName,
+    Map<int, Map<OverlayElement, double>>? segmentScales,
   }) =>
       OverlayStyle(
         tafsirMode: tafsirMode ?? this.tafsirMode,
@@ -146,6 +168,7 @@ class OverlayStyle {
         background: background ?? this.background,
         layout: layout ?? this.layout,
         reciterName: reciterName ?? this.reciterName,
+        segmentScales: segmentScales ?? this.segmentScales,
       );
 
   /// JSON للخطة (plan.json) وللقوالب. [forTemplate]: بدون اسم القارئ (بيخص
@@ -159,6 +182,14 @@ class OverlayStyle {
         'background': background.toJson(),
         'layout': layout.toJson(),
         if (!forTemplate) 'reciterName': reciterName,
+        if (!forTemplate)
+          'segmentScales': {
+            for (final k in segmentScales.keys.toList()..sort())
+              '$k': {
+                for (final e in segmentScales[k]!.keys)
+                  e.name: (segmentScales[k]![e]! * 1e4).round() / 1e4
+              }
+          },
       };
 
   /// من JSON (قوالب محفوظة): الحقول الناقصة أو الغلط بتاخد الافتراضي،
@@ -176,6 +207,20 @@ class OverlayStyle {
     // قوالب أقدم (يوم 8) كان فيها shadow: true/false.
     final legacy = j['shadow'];
     final rn = j['reciterName'];
+    final segScales = <int, Map<OverlayElement, double>>{};
+    final raw = j['segmentScales'];
+    if (raw is Map) {
+      raw.forEach((k, v) {
+        final idx = int.tryParse('$k');
+        if (idx == null || v is! Map) return;
+        final m = <OverlayElement, double>{};
+        for (final e in OverlayElement.values) {
+          final x = v[e.name];
+          if (x is num) m[e] = clampScale(x.toDouble());
+        }
+        if (m.isNotEmpty) segScales[idx] = m;
+      });
+    }
     return OverlayStyle(
       tafsirMode: pick(TafsirMode.values, j['tafsirMode'], TafsirMode.split),
       font: pick(AyahFont.values, j['font'], AyahFont.defaultFont),
@@ -189,6 +234,7 @@ class OverlayStyle {
       background: OverlayBackground.fromJson(j['background']),
       layout: OverlayLayout.fromJson(j['layout']),
       reciterName: rn is String ? rn : '',
+      segmentScales: segScales,
     );
   }
 
@@ -202,11 +248,13 @@ class OverlayStyle {
       (other.shadowStrength - shadowStrength).abs() < 1e-9 &&
       other.background == background &&
       other.layout == layout &&
-      other.reciterName == reciterName;
+      other.reciterName == reciterName &&
+      _sameSegScales(other.segmentScales, segmentScales);
 
   @override
   int get hashCode => Object.hash(tafsirMode, font, tafsirFont, color,
-      shadowStrength.toStringAsFixed(6), background, layout, reciterName);
+      shadowStrength.toStringAsFixed(6), background, layout, reciterName,
+      segmentScales.length);
 
   @override
   String toString() {
@@ -222,4 +270,18 @@ class OverlayStyle {
     ];
     return parts.join('، ');
   }
+}
+
+bool _sameSegScales(
+    Map<int, Map<OverlayElement, double>> a, Map<int, Map<OverlayElement, double>> b) {
+  if (a.length != b.length) return false;
+  for (final k in a.keys) {
+    final x = a[k], y = b[k];
+    if (y == null || x!.length != y.length) return false;
+    for (final e in x.keys) {
+      final v = y[e];
+      if (v == null || (v - x[e]!).abs() > 1e-6) return false;
+    }
+  }
+  return true;
 }

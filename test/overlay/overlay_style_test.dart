@@ -13,6 +13,7 @@ import 'package:quran_dub/overlay/overlay_templates.dart';
 import 'package:quran_dub/pipeline/recitation_segment.dart';
 
 void main() {
+  perSegmentTests();
   group('العناصر ومواقعها', () {
     test('الافتراضي = المقطع المرجعي: آية + تفسير بس، بدون سحب وبحجم 1', () {
       const l = OverlayLayout.reference;
@@ -391,6 +392,55 @@ void main() {
       expect(EditorCapabilities.free.canCustomize, isFalse);
       expect(EditorCapabilities.full.canCustomize, isTrue);
       expect(const EditorCapabilities().canCustomize, isTrue);
+    });
+  });
+}
+
+void perSegmentTests() {
+  group('أحجام كل مقطع لحاله (segmentScales)', () {
+    OverlayStyle withOverride() => OverlayStyle(
+          layout: OverlayLayout.reference
+              .update(OverlayElement.ayah, (p) => p.copyWith(scale: 1.0)),
+          segmentScales: {
+            2: {OverlayElement.ayah: 1.5, OverlayElement.tafsir: 0.7},
+          },
+        );
+
+    test('forSegment: المقطع اللي إله حجم خاص بياخده، والباقي بالعام', () {
+      final s = withOverride();
+      expect(s.forSegment(2).layout[OverlayElement.ayah].scale, 1.5);
+      expect(s.forSegment(2).layout[OverlayElement.tafsir].scale, 0.7);
+      expect(s.forSegment(1).layout[OverlayElement.ayah].scale, 1.0);
+      expect(identical(s.forSegment(1), s), isTrue);
+      // ما بيتغيّر غير الحجم (التشغيل/الموقع).
+      expect(s.forSegment(2).layout.isEnabled(OverlayElement.tafsir), isTrue);
+    });
+
+    test('JSON ذهاب وإياب، والقوالب ما بتحمله', () {
+      final s = withOverride();
+      final back = OverlayStyle.fromJson(jsonDecode(jsonEncode(s.toJson())));
+      expect(back, s);
+      expect(s.toJson(forTemplate: true).containsKey('segmentScales'), isFalse);
+      expect(OverlayStyle.fromJson({'segmentScales': {'x': {}, '3': {'ayah': 9}}})
+          .segmentScales[3]![OverlayElement.ayah], ElementPlacement.maxScale);
+      expect(OverlayStyle.fromJson({'segmentScales': 5}).segmentScales, isEmpty);
+    });
+
+    test('الشريط بيغطي أكبر حجم لأي مقطع', () {
+      final m = OverlayMetrics.forSize(1080, 1920);
+      final s = OverlayStyle(segmentScales: {
+        0: {OverlayElement.ayah: 1.6, OverlayElement.tafsir: 1.6},
+      });
+      final big = overlayBandForLayouts(m, s.allLayouts);
+      final base = overlayBandFor(m);
+      expect(big.top, lessThanOrEqualTo(base.top));
+      expect(big.bottom, greaterThanOrEqualTo(base.bottom));
+      expect(s.allLayouts.length, 2);
+    });
+
+    test('القالب بيمسح الأحجام الخاصة ولا بيحفظها', () {
+      final t = builtInTemplates.first;
+      expect(t.applyTo(withOverride()).segmentScales, isEmpty);
     });
   });
 }

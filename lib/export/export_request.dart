@@ -71,7 +71,7 @@ ExportPlan planForRequest(
     durationSeconds: info.durationSeconds,
     fileName: exportFileName(req.segments, now),
     outputPath: '$workDir/output.mp4',
-    band: overlayBandFor(metrics, layout: req.style.layout),
+    band: overlayBandForLayouts(metrics, req.style.allLayouts),
     cues: exportCuesFor(tl, (i) => overlayPngPath(workDir, i)),
     title: exportTitle(req.segments),
     style: req.style.toJson(),

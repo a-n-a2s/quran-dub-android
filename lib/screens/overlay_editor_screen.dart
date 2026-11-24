@@ -121,12 +121,19 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   Size _dragSize = Size.zero;
   bool _pinching = false;
   Map<OverlayElement, double> _pinchBase = {};
+  int? _pinchSeg;
 
   /// خطوط الإرشاد: بتبيّن بس وقت السحب أو التكبير بإصبعين.
   final ValueNotifier<List<SnapGuide>> _guides = ValueNotifier(const []);
 
   /// true = تكبير/تصغير كل العناصر مع بعض بنفس النسبة، false = العنصر المختار بس.
   bool _linkSizes = false;
+
+  /// true = الحجم لمقطع واحد بس (اللي ظاهر هلأ)، false = كل المقاطع مع بعض.
+  bool _perSegment = false;
+
+  /// رقم المقطع الظاهر هلأ (بيتحدّث مع التشغيل، لتحديث أزرار الحجم).
+  final ValueNotifier<int?> _segIdx = ValueNotifier(null);
 
   final TextEditingController _reciterCtl = TextEditingController();
 
@@ -144,6 +151,8 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
         videoDuration: info.durationMs > 0 ? info.durationSeconds : null);
     _ticker = createTicker((_) {
       _time.value = _clock.now(_wallSeconds);
+      final cur = _timeline.cueAt(_time.value)?.item.index;
+      if (cur != _segIdx.value) _segIdx.value = cur;
     })..start();
     _init();
     _autoPickColor();
@@ -272,6 +281,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     _audio?.dispose();
     _time.dispose();
     _guides.dispose();
+    _segIdx.dispose();
     _reciterCtl.dispose();
     super.dispose();
   }
@@ -343,21 +353,44 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
           if (_style.layout.isEnabled(e) && e.available) e
       ];
 
-  void _applyScales(Map<OverlayElement, double> scales) {
-    var l = _style.layout;
-    scales.forEach((e, v) => l = l.update(e, (p) => p.copyWith(scale: clampScale(v))));
-    _setStyle(_style.copyWith(layout: l));
+  /// المقطع اللي بيتعدّل حجمه: null = كل المقاطع (الحجم العام)، أو رقم المقطع
+  /// الظاهر هلأ لما "كل مقطع لحاله" شغّال. [_noSegment] = لحاله بس ما في مقطع ظاهر.
+  int? get _targetSeg => _perSegment ? _segIdx.value : null;
+  bool get _noSegment => _perSegment && _segIdx.value == null;
+
+  double _scaleOf(OverlayElement e, int? seg) =>
+      seg == null ? _style.layout[e].scale : _style.forSegment(seg).layout[e].scale;
+
+  void _applyScales(Map<OverlayElement, double> scales, {int? seg}) {
+    if (seg == null) {
+      var l = _style.layout;
+      scales.forEach((e, v) => l = l.update(e, (p) => p.copyWith(scale: clampScale(v))));
+      _setStyle(_style.copyWith(layout: l));
+      return;
+    }
+    final mine = {...?_style.segmentScales[seg]};
+    scales.forEach((e, v) => mine[e] = clampScale(v));
+    _setStyle(_style.copyWith(segmentScales: {..._style.segmentScales, seg: mine}));
   }
 
-  /// تغيير حجم [e] لـ [v]: لو "الكل مع بعض" كل العناصر بتتضرب بنفس النسبة.
+  /// رجّع حجم المقطع [seg] للحجم العام.
+  void _resetSegment(int seg) {
+    final m = {..._style.segmentScales}..remove(seg);
+    _setStyle(_style.copyWith(segmentScales: m));
+  }
+
+  /// تغيير حجم [e] لـ [v] (للمقطع الظاهر لو "كل مقطع لحاله"): لو "الكل مع بعض"
+  /// كل العناصر بتتضرب بنفس النسبة.
   void _scaleTo(OverlayElement e, double v) {
-    final old = _style.layout[e].scale;
+    if (_noSegment) return;
+    final seg = _targetSeg;
+    final old = _scaleOf(e, seg);
     if (!_linkSizes || old <= 0) {
-      _applyScales({e: v});
+      _applyScales({e: v}, seg: seg);
       return;
     }
     final f = v / old;
-    _applyScales({for (final x in _sizable) x: _style.layout[x].scale * f});
+    _applyScales({for (final x in _sizable) x: _scaleOf(x, seg) * f}, seg: seg);
   }
 
   void _setGuides(List<SnapGuide> g) {
@@ -382,7 +415,8 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     _baseCx = a != null ? a.cx * _w : r.center.dx;
     _baseTop = a != null ? a.top * _h : r.top;
     _pinching = false;
-    _pinchBase = {for (final x in _sizable) x: _style.layout[x].scale};
+    _pinchSeg = _targetSeg;
+    _pinchBase = {for (final x in _sizable) x: _scaleOf(x, _pinchSeg)};
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
@@ -398,10 +432,13 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     if (d.pointerCount >= 2) {
       _pinching = true;
       final f = d.scale;
-      if (_linkSizes) {
-        _applyScales({for (final x in _pinchBase.keys) x: _pinchBase[x]! * f});
+      if (_perSegment && _pinchSeg == null) {
+        // ما في مقطع ظاهر: ما في شي نكبّره لحاله.
+      } else if (_linkSizes) {
+        _applyScales({for (final x in _pinchBase.keys) x: _pinchBase[x]! * f},
+            seg: _pinchSeg);
       } else if (_pinchBase.containsKey(e)) {
-        _applyScales({e: _pinchBase[e]! * f});
+        _applyScales({e: _pinchBase[e]! * f}, seg: _pinchSeg);
       }
       final r = _rectOf(e);
       if (r != null) {
@@ -715,37 +752,86 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
               _can ? (s) => _setStyle(_style.copyWith(tafsirMode: s.first)) : null,
         ),
         const SizedBox(height: 8),
+        ValueListenableBuilder<int?>(
+          valueListenable: _segIdx,
+          builder: (_, __, ___) => _sizesSection(),
+        ),
+      ],
+    );
+  }
+
+  /// قسم الأحجام: زرين: (1) المقاطع: كل المقاطع مع بعض / المقطع الظاهر لحاله،
+  /// (2) العناصر: كل العناصر مع بعض / العنصر لحاله.
+  Widget _sizesSection() {
+    final seg = _targetSeg;
+    final idx = _segIdx.value;
+    final cur = idx == null
+        ? null
+        : _timeline.items.where((i) => i.index == idx).firstOrNull?.segment;
+    final curName = cur == null
+        ? 'ما في نص ظاهر هلأ'
+        : '${_surahLookup(cur.surah ?? 0) ?? 'سورة ${cur.surah}'} • ${cur.ayah ?? ''}'
+            '${cur.partCount > 1 ? ' (جزء ${cur.part}/${cur.partCount})' : ''}';
+    final hasOverride = seg != null && _style.segmentScales.containsKey(seg);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
         Row(
           children: [
             const Expanded(child: Text('الأحجام')),
             FilterChip(
+              avatar: Icon(_perSegment ? Icons.looks_one_outlined : Icons.layers, size: 18),
+              label: Text(_perSegment ? 'كل مقطع لحاله' : 'كل المقاطع مع بعض'),
+              selected: _perSegment,
+              onSelected: _can ? (v) => setState(() => _perSegment = v) : null,
+            ),
+            const SizedBox(width: 6),
+            FilterChip(
               avatar: Icon(_linkSizes ? Icons.link : Icons.link_off, size: 18),
-              label: Text(_linkSizes ? 'الكل مع بعض' : 'عنصر لحاله'),
+              label: Text(_linkSizes ? 'كل العناصر مع بعض' : 'عنصر لحاله'),
               selected: _linkSizes,
               onSelected: _can ? (v) => setState(() => _linkSizes = v) : null,
             ),
           ],
         ),
+        if (_perSegment)
+          Row(
+            children: [
+              Expanded(
+                child: Text('المقطع الظاهر: $curName',
+                    style: const TextStyle(fontSize: 12, color: _gold)),
+              ),
+              if (hasOverride)
+                TextButton(
+                  onPressed: () => _resetSegment(seg),
+                  child: const Text('رجّعه للحجم العام'),
+                ),
+            ],
+          ),
+        _Note(_perSegment
+            ? 'الحجم هون بيتغيّر للمقطع الظاهر بس (شغّل أو حرّك الفيديو لمقطع ثاني '
+                'لتغيّر حجمه). المقاطع الباقية بتضل بحجمها.'
+            : 'الحجم هون بيطبّق على كل المقاطع (كل الآيات، كل التفاسير...) مع بعض.'),
         const _Note('اضغط على عنصر بالفيديو لتحديده، وبعدين اسحب من أي مكان لتحريكه '
-            'أو استعمل إصبعين لتكبيره وتصغيره. "الكل مع بعض" بيكبّر ويصغّر كل العناصر بنفس النسبة.'),
+            'أو استعمل إصبعين لتكبيره وتصغيره.'),
         for (final e in OverlayElement.values)
-          if (layout.isEnabled(e) && e.available)
+          if (_style.layout.isEnabled(e) && e.available)
             Row(
               children: [
                 SizedBox(width: 92, child: Text(e.label, style: const TextStyle(fontSize: 12))),
                 Expanded(
                   child: Slider(
-                    value: layout[e].scale,
+                    value: _scaleOf(e, seg),
                     min: ElementPlacement.minScale,
                     max: ElementPlacement.maxScale,
                     divisions: 20,
-                    label: '${(layout[e].scale * 100).round()}٪',
-                    onChanged: _can ? (v) => _scaleTo(e, v) : null,
+                    label: '${(_scaleOf(e, seg) * 100).round()}٪',
+                    onChanged: _can && !_noSegment ? (v) => _scaleTo(e, v) : null,
                   ),
                 ),
                 SizedBox(
                     width: 40,
-                    child: Text('${(layout[e].scale * 100).round()}٪',
+                    child: Text('${(_scaleOf(e, seg) * 100).round()}٪',
                         style: const TextStyle(fontSize: 12))),
               ],
             ),

@@ -107,7 +107,8 @@ class AyahOverlayFrame extends StatelessWidget {
                     child: _OverlayContent(
                       segment: c.item.segment,
                       metrics: m,
-                      style: style,
+                      // أحجام المقطع الخاصة (لو المستخدم غيّرها لمقطع لحاله).
+                      style: style.forSegment(c.item.index),
                       surahName: surahName,
                       elementKeys: elementKeys,
                     ),

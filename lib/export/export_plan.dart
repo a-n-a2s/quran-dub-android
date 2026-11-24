@@ -81,8 +81,15 @@ List<(double, double)> overlayInkRanges(OverlayMetrics m, OverlayLayout layout) 
 /// بالضبط. لما عنصر ينسحب أو يتشغّل اسم السورة، الشريط بيتسع ليغطي اتحاد
 /// مستطيلاتهم. هاد المكان الوحيد اللي بيتغيّر بالتصدير.
 OverlayBand overlayBandFor(OverlayMetrics m,
-    {OverlayLayout layout = OverlayLayout.reference}) {
-  final ranges = overlayInkRanges(m, layout);
+    {OverlayLayout layout = OverlayLayout.reference}) =>
+    overlayBandForLayouts(m, [layout]);
+
+/// نفس [overlayBandFor] بس لاتحاد عدة تخطيطات (يوم 9: أحجام خاصة لكل مقطع، فكل
+/// مقطع إله تخطيط). الشريط واحد لكل الفيديو، فلازم يغطي أكبر واحد.
+OverlayBand overlayBandForLayouts(OverlayMetrics m, List<OverlayLayout> layouts) {
+  final ranges = <(double, double)>[
+    for (final l in layouts) ...overlayInkRanges(m, l),
+  ];
   if (ranges.isEmpty) ranges.add((m.top, m.bottomLimit));
   var lo = ranges.first.$1, hi = ranges.first.$2;
   for (final r in ranges) {

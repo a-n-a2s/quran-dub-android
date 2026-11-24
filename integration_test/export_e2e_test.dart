@@ -416,7 +416,16 @@ OverlayStyle _styleFor(Map<String, dynamic> c) {
     layout = layout.update(OverlayElement.tafsir, (p) => p.copyWith(anchor: mt));
   }
   final bg = c['bg'] as Map<String, dynamic>?;
+  // أحجام خاصة بمقاطع: {"1": {"ayah": 1.5, "tafsir": 0.7}} (رقم المقطع بالقائمة).
+  final segScales = <int, Map<OverlayElement, double>>{};
+  (c['segmentScales'] as Map<String, dynamic>?)?.forEach((k, v) {
+    segScales[int.parse(k)] = {
+      for (final e in OverlayElement.values)
+        if ((v as Map)[e.name] is num) e: (v[e.name] as num).toDouble()
+    };
+  });
   return OverlayStyle(
+    segmentScales: segScales,
     color: c['color'] == 'black' ? OverlayTextColor.black : OverlayTextColor.white,
     shadowStrength: (c['shadowStrength'] as num?)?.toDouble() ??
         (c['shadow'] == true ? OverlayStyle.defaultShadowStrength : 0),

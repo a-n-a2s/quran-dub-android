@@ -45,6 +45,7 @@ OverlayLayout enable(OverlayLayout l, OverlayElement e) =>
     l.update(e, (p) => p.copyWith(enabled: true));
 
 void main() {
+  perSegmentWidgetTests();
   const ayah = ValueKey('overlay-ayah');
   const tafsir = ValueKey('overlay-tafsir');
   const surah = ValueKey('overlay-surah-ref');
@@ -158,5 +159,38 @@ void main() {
           isTrue,
           reason: mode.name);
     }
+  });
+}
+
+void perSegmentWidgetTests() {
+  testWidgets('حجم مقطع بعينه: الآية أكبر بمقطعه من مقطع ثاني بنفس الشكل',
+      (tester) async {
+    Future<double> ayahHeight(int index) async {
+      const size = Size(1080, 1920);
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final style = OverlayStyle(
+        layout: OverlayLayout.reference.update(OverlayElement.ayah,
+            (p) => p.copyWith(anchor: const ElementAnchor(0.5, 0.1))),
+        segmentScales: {1: {OverlayElement.ayah: 1.5}},
+      );
+      await tester.pumpWidget(MaterialApp(
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: AyahOverlayFrame(
+            videoWidth: 1080,
+            videoHeight: 1920,
+            cue: OverlayCue(OverlayItem(seg(), index, 0, 5), 1),
+            style: style,
+          ),
+        ),
+      ));
+      return tester.getSize(find.byKey(const ValueKey('overlay-ayah'))).height;
+    }
+
+    final normal = await ayahHeight(0);
+    final big = await ayahHeight(1);
+    expect(big, greaterThan(normal * 1.2));
   });
 }

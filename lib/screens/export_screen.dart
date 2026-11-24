@@ -155,7 +155,7 @@ class _ExportScreenState extends State<ExportScreen> {
       // صور النص: نفس AyahOverlayFrame ونفس الخط الزمني تبع المعاينة.
       final tl = req.timeline;
       final metrics = OverlayMetrics.forSize(plan.size.width, plan.size.height);
-      assert(overlayBandFor(metrics, layout: req.style.layout).top == plan.band.top);
+      assert(overlayBandForLayouts(metrics, req.style.allLayouts).top == plan.band.top);
       for (var i = 0; i < tl.items.length; i++) {
         if (_cancelRequested || !mounted) {
           await _cleanup(workDir);

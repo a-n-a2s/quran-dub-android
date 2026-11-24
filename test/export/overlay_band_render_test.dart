@@ -104,6 +104,11 @@ void main() {
         shadowStrength: 1.0, layout: moved(OverlayElement.ayah, 0.0, 0.3, scale: 1.6)),
     'آية على الحافة اليمنى cx=1 وصغيرة 60%': OverlayStyle(
         shadowStrength: 1.0, layout: moved(OverlayElement.ayah, 1.0, 0.3, scale: 0.6)),
+    'مقطع 0 بآية وتفسير 160% (حجم خاص بالمقطع)': const OverlayStyle(
+        shadowStrength: 1.0,
+        segmentScales: {
+          0: {OverlayElement.ayah: 1.6, OverlayElement.tafsir: 1.6}
+        }),
     'تفسير تحت الآية صغير 60% وآية بدون': OverlayStyle(
         shadowStrength: 0.7,
         layout: OverlayLayout.reference
@@ -126,7 +131,7 @@ void main() {
           tester.view.devicePixelRatio = 1.0;
           addTearDown(tester.view.reset);
           final band =
-              overlayBandFor(OverlayMetrics.forSize(w, h), layout: st.value.layout);
+              overlayBandForLayouts(OverlayMetrics.forSize(w, h), st.value.allLayouts);
           final item = OverlayItem(sg.value, 0, 0, 5);
           final job = OverlayRenderJob(
               width: w,
