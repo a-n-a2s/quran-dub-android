@@ -51,6 +51,7 @@ enum ExportErrorKind {
   overlay,
   io,
   timeout,
+  foreground,
   unknown;
 
   static ExportErrorKind parse(String? s) => ExportErrorKind.values
@@ -68,6 +69,8 @@ enum ExportErrorKind {
         io => 'صار خطأ بقراءة أو كتابة الملف.',
         timeout =>
           'أندرويد وقّف التصدير لأنه طوّل كتير بالخلفية. افتح التطبيق وجرّب كمان مرة.',
+        foreground =>
+          'أندرويد رفض تشغيل خدمة التصدير بالخلفية على هالجوال. انسخ تقرير التصدير وابعته.',
         unknown => 'صار خطأ بالتصدير.',
       };
 }

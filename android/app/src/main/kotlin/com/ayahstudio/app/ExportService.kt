@@ -87,6 +87,8 @@ class ExportService : Service() {
     private var startedAt = 0L
     private var lastPercent = -1
     private var keepWorkFiles = false
+    /** رقم التصدير من مجلد الخطة (…/export/<id>/plan.json) عشان الفشل المبكر يوصل للواجهة. */
+    private var reqId: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -100,12 +102,12 @@ class ExportService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val path = intent.getStringExtra(EXTRA_PLAN)
-                CrashLog.trace(this, "service:startForeground")
-                try {
-                    goForeground("تجهيز…", 0, true)
-                } catch (e: Throwable) {
-                    Log.e(TAG, "startForeground failed", e)
-                    fail("unknown", "startForeground: $e")
+                reqId = path?.let { File(it).parentFile?.name }
+                CrashLog.trace(this, "service:startForeground sdk=${Build.VERSION.SDK_INT}")
+                val fgError = goForeground("تجهيز…", 0, true)
+                if (fgError != null) {
+                    Log.e(TAG, "startForeground failed: $fgError")
+                    fail("foreground", fgError)
                     return START_NOT_STICKY
                 }
                 CrashLog.trace(this, "service:foreground ok")
@@ -127,15 +129,39 @@ class ExportService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun goForeground(text: String, percent: Int, indeterminate: Boolean) {
-        ExportNotifications.ensureChannels(this)
-        val n = ExportNotifications.progress(this, plan?.title ?: "", percent, indeterminate, text)
-        val type = when {
-            Build.VERSION.SDK_INT >= 35 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
-            Build.VERSION.SDK_INT >= 34 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            else -> 0
+    /**
+     * بيحاول startForeground بأنواع مختلفة (بعض الجوالات/النسخ بترفض نوع وبتقبل
+     * غيره). بيرجع null لو نجح، وإلا نص كل الأخطاء (استثناء Java مش لازم يوقّع
+     * التطبيق: كان هاد سبب الانهيار على جوال أنس).
+     */
+    private fun goForeground(text: String, percent: Int, indeterminate: Boolean): String? {
+        val errors = StringBuilder()
+        val n = try {
+            ExportNotifications.ensureChannels(this)
+            ExportNotifications.progress(this, plan?.title ?: "", percent, indeterminate, text)
+        } catch (e: Throwable) {
+            return "notification: $e"
         }
-        ServiceCompat.startForeground(this, ExportNotifications.ID_PROGRESS, n, type)
+        val types = when {
+            Build.VERSION.SDK_INT >= 35 -> listOf(
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                -1,
+            )
+            Build.VERSION.SDK_INT >= 34 -> listOf(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, -1)
+            else -> listOf(0)
+        }
+        for (type in types) {
+            try {
+                if (type == -1) startForeground(ExportNotifications.ID_PROGRESS, n)
+                else ServiceCompat.startForeground(this, ExportNotifications.ID_PROGRESS, n, type)
+                CrashLog.trace(this, "service:foreground type=$type")
+                return null
+            } catch (e: Throwable) {
+                errors.append("type=$type: $e\n")
+            }
+        }
+        return errors.toString().trim()
     }
 
     private fun updateNotification(text: String, percent: Int, indeterminate: Boolean) {
@@ -149,7 +175,7 @@ class ExportService : Service() {
     }
 
     private fun status(phase: String, fraction: Double = 0.0, extra: Map<String, Any?> = emptyMap()) {
-        ExportHub.update(mapOf("id" to plan?.id, "phase" to phase, "fraction" to fraction) + extra)
+        ExportHub.update(mapOf("id" to (plan?.id ?: reqId), "phase" to phase, "fraction" to fraction) + extra)
     }
 
     private fun begin(planPath: String) {
@@ -386,7 +412,7 @@ class ExportService : Service() {
     private fun fail(kind: String, detail: String) {
         Log.e(TAG, "fail $kind: $detail")
         ExportHub.update(
-            mapOf("id" to plan?.id, "phase" to "failed", "error" to kind, "errorDetail" to detail, "fraction" to 0.0)
+            mapOf("id" to (plan?.id ?: reqId), "phase" to "failed", "error" to kind, "errorDetail" to detail, "fraction" to 0.0)
         )
         plan?.let { cleanupWork(it) }
         finishForeground()
@@ -400,6 +426,7 @@ class ExportService : Service() {
         "decoderUnsupported" -> "ما قدرنا نقرأ صيغة الفيديو الأصلي."
         "inputMissing" -> "ملف الفيديو الأصلي مش موجود."
         "timeout" -> "أندرويد وقّف التصدير لأنه طوّل كتير بالخلفية."
+        "foreground" -> "أندرويد رفض تشغيل خدمة التصدير. افتح التطبيق وانسخ تقرير التصدير."
         else -> "صار خطأ بالتصدير. افتح التطبيق للتفاصيل."
     }
 

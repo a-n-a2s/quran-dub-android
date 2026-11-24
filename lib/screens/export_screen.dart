@@ -90,7 +90,7 @@ class _ExportScreenState extends State<ExportScreen> {
       }
       return;
     }
-    if (s.id != id) return;
+    if (s.id != id && !(s.id == null && s.phase.isFinished)) return;
     if (s.phase == ExportPhase.idle) return;
     setState(() => _status = s);
     if (s.phase.isFinished) _reportFinished(s);
