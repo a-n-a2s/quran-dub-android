@@ -8,6 +8,8 @@ cd "$out"
 D=7
 dark="gradients=s=%s:c0=0x0b1f2a:c1=0x1f3b2c:c2=0x2a1f3b:speed=0.02:r=30:d=$D"
 light="gradients=s=%s:c0=0xf6f2e6:c1=0xe2dccb:c2=0xeef3f6:speed=0.02:r=30:d=$D"
+# رمادي متوسط: الظل الأسود والأبيض بيبينوا الاثنين (قياس الظل بالفيديو الناتج).
+mid="gradients=s=%s:c0=0x7c7c7c:c1=0x888888:c2=0x808080:speed=0.02:r=30:d=$D"
 tone="sine=f=440:sample_rate=48000:d=$D"
 
 mk() { # name size bg extra...
@@ -20,6 +22,8 @@ mk() { # name size bg extra...
 
 mk portrait_dark.mp4 1080x1920 "$dark"
 mk portrait_light.mp4 1080x1920 "$light"
+mk portrait_mid.mp4 1080x1920 "$mid"
+mk landscape_mid.mp4 1920x1080 "$mid"
 mk landscape_dark.mp4 1920x1080 "$dark"
 mk square_light.mp4 1080x1080 "$light"
 # مخزّن أفقي 1920x1080 بعلامة دوران 90° → المستخدم بيشوفه عمودي 1080x1920.
@@ -43,6 +47,10 @@ cat > cases.json <<'J'
   {"name": "rotated90_white", "file": "rot90_dark.mp4", "color": "white"},
   {"name": "cancel", "file": "portrait_dark.mp4", "color": "white", "cancel": true},
   {"name": "background_home", "file": "landscape_dark.mp4", "color": "white", "background": true},
+  {"name": "shadow100_white_mid", "file": "portrait_mid.mp4", "color": "white", "shadowStrength": 1.0, "expectShadow": true},
+  {"name": "shadow100_black_mid", "file": "portrait_mid.mp4", "color": "black", "shadowStrength": 1.0, "expectShadow": true},
+  {"name": "shadow30_white_mid", "file": "portrait_mid.mp4", "color": "white", "shadowStrength": 0.3, "expectShadow": true},
+  {"name": "moved_big_bg_names", "file": "landscape_mid.mp4", "color": "white", "shadowStrength": 1.0, "expectShadow": true, "bg": {"mode": "box", "opacity": 0.45}, "surahRef": true, "reciter": "الشيخ محمد", "moveAyah": [0.5, 0.15], "ayahScale": 1.3, "moveTafsir": [0.5, 0.7], "skipFirstRow": true},
   {"name": "external_audio_amiri_full", "file": "portrait_dark.mp4", "audio": "recite.m4a", "color": "white", "font": "amiriQuran", "tafsir": "fullUnderEachPart"}
 ]
 J

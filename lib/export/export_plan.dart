@@ -10,6 +10,7 @@
 // بينعكس على التصدير بدون ما نلمس الـ Kotlin.
 import 'dart:math' as math;
 
+import '../overlay/overlay_layout.dart';
 import '../overlay/overlay_metrics.dart';
 import '../overlay/overlay_timeline.dart';
 import 'export_settings.dart';
@@ -33,24 +34,65 @@ class OverlayBand {
   String toString() => 'شريط $top..$bottom';
 }
 
-/// هامش فوق وتحت الكتلة كنسبة من الوحدة: الظل (لو مشغّل) بيطلع شوي برا حدود
-/// الحروف (نعومة ~2.5×[OverlayMetrics.shadowBlur] + إزاحة)، وعلامات التشكيل
-/// فوق أول سطر.
-const double bandMarginUnits = 0.05;
+/// الأجزاء العمودية من الفيديو اللي ممكن يطلع فيها حبر (نص أو ظل أو خلفية)
+/// لتخطيط [layout]، كأزواج (أعلى، أسفل) بالبكسل، **بدون** هامش الظل. بتتحسب
+/// من نفس [OverlayMetrics] ونفس قواعد [AyahOverlayFrame] (من غير قياس نص):
+///  - الكتلة الأساسية: من [OverlayMetrics.top] لـ [OverlayMetrics.bottomLimit]
+///    (الكتلة الأطول بتتصغّر لتتسع، فما بتتعدّاها).
+///  - اسم السورة بمكانه الافتراضي: فوق أول سطر الآية، بارتفاع سطرين كحد أقصى.
+///  - العنصر المنسحب: من أعلاه لحد أسفل الصندوق اللي بيتسع فيه
+///    ([OverlayMetrics.detachedHeightAt]؛ وعناصر السطر الواحد بارتفاع سطرين).
+List<(double, double)> overlayInkRanges(OverlayMetrics m, OverlayLayout layout) {
+  final out = <(double, double)>[];
+  double singleLineSize(OverlayElement e) => switch (e) {
+        OverlayElement.surahRef => m.unit * OverlayMetrics.surahRefSizeRatio,
+        OverlayElement.reciter => m.unit * OverlayMetrics.reciterSizeRatio,
+        _ => m.unit * OverlayMetrics.translationSizeRatio,
+      };
+  var flowVisible = false;
+  for (final e in flowElements) {
+    if (layout.isEnabled(e) && !layout[e].isDetached) flowVisible = true;
+  }
+  if (flowVisible) out.add((m.top, m.bottomLimit));
+  final sr = layout[OverlayElement.surahRef];
+  if (sr.enabled && !sr.isDetached) {
+    final h = m.singleLineMaxHeight(singleLineSize(OverlayElement.surahRef), sr.scale);
+    final bottom = m.top - m.unit * OverlayMetrics.surahRefGapRatio;
+    out.add((bottom - h, bottom));
+  }
+  for (final e in layout.detached) {
+    final top = layout[e].anchor!.top * m.height;
+    var h = m.detachedHeightAt(top);
+    if (e == OverlayElement.surahRef || e == OverlayElement.reciter) {
+      h = math.min(h, m.singleLineMaxHeight(singleLineSize(e), layout[e].scale));
+    }
+    out.add((top, top + h));
+  }
+  return out;
+}
 
 /// شريط الكتلة من نفس [OverlayMetrics] اللي بيستعملها [AyahOverlayFrame]:
-/// من [OverlayMetrics.top] لـ [OverlayMetrics.bottomLimit] + هامش، ضمن حدود
-/// الفيديو. الحدود زوجية (البداية والارتفاع) عشان مركز الشريط يكون على بكسل
+/// اتحاد [overlayInkRanges] + هامش ([OverlayMetrics.bandMargin])، ضمن حدود
+/// الفيديو. الهامش مش حسب شدة الظل الحالية بل أكبر ظل ممكن (100%)، فالشريط
+/// ما بيتغيّر لما المستخدم يحرّك السلايدر وبيغطي أقوى ظل. الحدود زوجية (البداية والارتفاع) عشان مركز الشريط يكون على بكسل
 /// كامل (بدون أي نعومة من أخذ العينات بالـ GPU).
 ///
-/// يوم 9 (سحب العناصر لأي مكان): لازم الشريط يغطي كل العناصر — أسهل شي يصير
-/// الإطار كامل `OverlayBand(0, height)` أو اتحاد مستطيلات العناصر. هاد المكان
-/// الوحيد اللي بيتغيّر.
-OverlayBand overlayBandFor(OverlayMetrics m) {
-  final margin = m.unit * bandMarginUnits;
-  var top = (m.top - margin).floor();
+/// يوم 9 (سحب العناصر لأي مكان): بالافتراضي (آية + تفسير) نفس شريط يوم 8
+/// بالضبط. لما عنصر ينسحب أو يتشغّل اسم السورة، الشريط بيتسع ليغطي اتحاد
+/// مستطيلاتهم. هاد المكان الوحيد اللي بيتغيّر بالتصدير.
+OverlayBand overlayBandFor(OverlayMetrics m,
+    {OverlayLayout layout = OverlayLayout.reference}) {
+  final ranges = overlayInkRanges(m, layout);
+  if (ranges.isEmpty) ranges.add((m.top, m.bottomLimit));
+  var lo = ranges.first.$1, hi = ranges.first.$2;
+  for (final r in ranges) {
+    lo = math.min(lo, r.$1);
+    hi = math.max(hi, r.$2);
+  }
+  final margin = m.bandMargin;
+  var top = (lo - margin).floor();
   top = math.max(0, top - top % 2);
-  var bottom = math.min(m.height, (m.bottomLimit + margin).ceil());
+  var bottom = math.min(m.height, (hi + margin).ceil());
   if ((bottom - top).isOdd) bottom = bottom < m.height ? bottom + 1 : bottom - 1;
   return OverlayBand(top, math.max(2, bottom - top));
 }
@@ -156,6 +198,10 @@ class ExportPlan {
   /// عنوان الإشعار (مثلاً "ق ٢٧–٣٠").
   final String title;
 
+  /// شكل النص (يوم 9): نفس [OverlayStyle.toJson] اللي انرسمت فيه الصور —
+  /// للتقرير والفحص بس (الـ Kotlin ما بيقرأه، الصور جاهزة).
+  final Map<String, Object?> style;
+
   const ExportPlan({
     required this.id,
     required this.inputPath,
@@ -170,6 +216,7 @@ class ExportPlan {
     required this.band,
     required this.cues,
     required this.title,
+    this.style = const {},
   });
 
   bool get hasAudio => audio is! NoAudio;
@@ -196,5 +243,6 @@ class ExportPlan {
         'band': band.toJson(),
         'cues': [for (final c in cues) c.toJson()],
         'title': title,
+        'style': style,
       };
 }

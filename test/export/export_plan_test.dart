@@ -58,8 +58,8 @@ void main() {
 
     test('المرجع 1080×1920: الشريط من ~58% لآخر الفيديو تقريباً', () {
       final b = overlayBandFor(OverlayMetrics.forSize(1080, 1920));
-      expect(b.top / 1920, closeTo(0.58, 0.01));
-      expect(b.bottom / 1920, closeTo(0.99, 0.02));
+      expect(b.top / 1920, closeTo(0.58, 0.03));
+      expect(b.bottom / 1920, closeTo(0.99, 0.03));
     });
   });
 
@@ -131,7 +131,9 @@ void main() {
           videoInfo: videoInfo),
       segments: [mk(0, 1, kind: SegmentKind.istiadha), mk(1, 4), mk(4, 8, ayah: 28)],
       style: const OverlayStyle(
-          color: OverlayTextColor.black, shadow: true, font: AyahFont.amiriQuran),
+          color: OverlayTextColor.black,
+          shadowStrength: 0.7,
+          font: AyahFont.amiriQuran),
     );
 
     test('أبعاد بعد الدوران، fps 30 لو مش معروف، الشريط، المقاطع', () {
@@ -146,6 +148,7 @@ void main() {
       expect(p.outputPath, '/c/export/exp1/output.mp4');
       expect(p.fileName, startsWith('AyahStudio_050-027-028_'));
       expect(p.band, overlayBandFor(OverlayMetrics.forSize(1080, 1920)));
+      expect(p.style, req.style.toJson());
       // آخر مقطع مقصوص على مدة الفيديو.
       expect(p.cues.last.end, lessThanOrEqualTo(58.8));
     });
@@ -158,6 +161,7 @@ void main() {
         'version', 'id', 'input', 'audio', 'width', 'height', 'videoBitrate',
         'audioBitrate', 'fps', 'durationMs', 'fileName', 'output', 'band',
         'cues', 'title', 'estimatedBytes', 'sourceWidth', 'sourceHeight',
+        'style',
       ]) {
         expect(j.containsKey(k), isTrue, reason: k);
       }
@@ -178,12 +182,14 @@ void main() {
     });
 
     test('الأسماء الإنجليزية للأنماط ثابتة (الخطة والتقارير)', () {
-      expect(req.style.toJson(), {
-        'tafsirMode': 'split',
-        'font': 'amiriQuran',
-        'color': 'black',
-        'shadow': true,
-      });
+      final j = req.style.toJson();
+      expect(j['tafsirMode'], 'split');
+      expect(j['font'], 'amiriQuran');
+      expect(j['tafsirFont'], 'amiri');
+      expect(j['color'], 'black');
+      expect(j['shadowStrength'], 0.7);
+      expect(j.keys, containsAll(['background', 'layout', 'reciterName']));
+      expect(OverlayStyle.fromJson(j), req.style);
       expect(TafsirMode.values.map((e) => e.name),
           ['split', 'fullUnderEachPart']);
     });

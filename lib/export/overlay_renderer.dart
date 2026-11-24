@@ -19,12 +19,16 @@ class OverlayRenderJob {
   final OverlayItem item;
   final OverlayStyle style;
 
+  /// أسماء السور لعنصر "اسم السورة ورقم الآية" (رقم → اسم).
+  final Map<int, String>? surahNames;
+
   const OverlayRenderJob({
     required this.width,
     required this.height,
     required this.band,
     required this.item,
     required this.style,
+    this.surahNames,
   });
 }
 
@@ -169,10 +173,8 @@ class OverlayBandView extends StatelessWidget {
                 videoWidth: job.width,
                 videoHeight: job.height,
                 cue: OverlayCue(job.item, 1.0),
-                tafsirMode: job.style.tafsirMode,
-                font: job.style.font,
-                color: job.style.color,
-                shadow: job.style.shadow,
+                style: job.style,
+                surahName: job.surahNames == null ? null : (n) => job.surahNames![n],
               ),
             ),
           ),

@@ -8,7 +8,7 @@ import '../pipeline/project_input.dart';
 import '../pipeline/recitation_pipeline.dart';
 import '../pipeline/recitation_segment.dart';
 import '../platform/media_picker.dart';
-import 'overlay_preview_screen.dart';
+import 'overlay_editor_screen.dart';
 
 enum _AnalysisState { validating, analyzing, done, error }
 
@@ -198,11 +198,11 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
             Text('الآيات: ${r.ayahRefs.join('، ')}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
-            // يوم 7: معاينة الفيديو مع النص المتزامن (نمط التفسير وخط الآية
+            // يوم 9: المحرر (معاينة + سحب العناصر + تخصيص + قوالب). من يوم 7: النص المتزامن (نمط التفسير وخط الآية
             // بتتبدّل جوا شاشة المعاينة).
             FilledButton.icon(
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => OverlayPreviewScreen(
+                builder: (_) => OverlayEditorScreen(
                   input: _input,
                   segments: r.segments,
                 ),

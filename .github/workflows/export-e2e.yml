@@ -93,8 +93,8 @@ jobs:
           if not os.path.exists(p) or os.path.getsize(p) == 0:
               print("ما في نتائج (شوف flutter_test.log بالـ artifact).")
               raise SystemExit
-          print("| الحالة | الأصل | الناتج | الوقت | MAE النص | النص مقابل الأصل | برا الشريط | أول سطر (متوقع/ناتج) | مشاكل |")
-          print("|---|---|---|---|---|---|---|---|---|")
+          print("| الحالة | الأصل | الناتج | الوقت | MAE النص | النص مقابل الأصل | برا الشريط | أول سطر (متوقع/ناتج) | ظل: بكسلات / فرق متوقع / فرق ناتج | مشاكل |")
+          print("|---|---|---|---|---|---|---|---|---|---|")
           for line in open(p):
               line = line.strip()
               if not line: continue
@@ -105,11 +105,13 @@ jobs:
               mv = min((f["maeTextVsSource"] for f in full), default=-1)
               mo = max((f["maeOutside"] for f in fr), default=-1)
               rows = ", ".join(f'{f["expectedFirstRow"]}/{f["outFirstRow"]}' for f in full)
+              sh = [f for f in full if f.get("shadowN", 0) > 0]
+              shs = ", ".join(f'{f["shadowN"]}/{f["shadowExpDiff"]:.1f}/{f["shadowOutDiff"]:.1f}' for f in sh) or "-"
               probs = "; ".join(r.get("problems", [])) or "✅"
               if r["name"] == "cancel":
-                  print(f'| cancel | | {r.get("status","")} | | | | | | {"; ".join(r.get("problems", [])) or "✅"} |')
+                  print(f'| cancel | | {r.get("status","")} | | | | | | | {"; ".join(r.get("problems", [])) or "✅"} |')
                   continue
-              print(f'| {r["name"]} | {r.get("source","")} | {r.get("output","")} | {(r.get("elapsedMs") or 0)/1000:.1f}s | {mt:.1f} | {mv:.1f} | {mo:.1f} | {rows} | {probs[:300]} |')
+              print(f'| {r["name"]} | {r.get("source","")} | {r.get("output","")} | {(r.get("elapsedMs") or 0)/1000:.1f}s | {mt:.1f} | {mv:.1f} | {mo:.1f} | {rows} | {shs} | {probs[:300]} |')
           b = "build/e2e_out/background_check.txt"
           if os.path.exists(b):
               print("\n### بالخلفية (Home بنص التصدير)\n```")

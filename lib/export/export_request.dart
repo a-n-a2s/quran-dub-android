@@ -16,6 +16,10 @@ class ExportRequest {
   final OverlayStyle style;
   final ExportQuality quality;
 
+  /// أسماء السور (رقم → اسم) لعنصر "اسم السورة ورقم الآية" (من جدول `surahs`).
+  /// بدونها بيطلع "سورة 50".
+  final Map<int, String>? surahNames;
+
   /// للتجربة بالـ CI: الـ Kotlin ما بيمسح صور النص والملف المؤقت.
   final bool keepWorkFiles;
 
@@ -24,6 +28,7 @@ class ExportRequest {
     required this.segments,
     this.style = const OverlayStyle(),
     this.quality = ExportQuality.original,
+    this.surahNames,
     this.keepWorkFiles = false,
   });
 
@@ -66,8 +71,9 @@ ExportPlan planForRequest(
     durationSeconds: info.durationSeconds,
     fileName: exportFileName(req.segments, now),
     outputPath: '$workDir/output.mp4',
-    band: overlayBandFor(metrics),
+    band: overlayBandFor(metrics, layout: req.style.layout),
     cues: exportCuesFor(tl, (i) => overlayPngPath(workDir, i)),
     title: exportTitle(req.segments),
+    style: req.style.toJson(),
   );
 }

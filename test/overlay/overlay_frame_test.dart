@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quran_dub/overlay/ayah_font.dart';
 import 'package:quran_dub/overlay/overlay_frame.dart';
+import 'package:quran_dub/overlay/overlay_style.dart';
 import 'package:quran_dub/overlay/overlay_timeline.dart';
 import 'package:quran_dub/pipeline/recitation_segment.dart';
 
@@ -32,10 +33,7 @@ OverlayCue cue(RecitationSegment s, [double opacity = 1]) =>
     OverlayCue(OverlayItem(s, 0, 0, 5), opacity);
 
 Future<void> pump(WidgetTester tester, Size size, OverlayCue? c,
-    {TafsirMode mode = TafsirMode.split,
-    AyahFont font = AyahFont.kfgqpcHafs,
-    OverlayTextColor color = OverlayTextColor.white,
-    bool shadow = false}) async {
+    {OverlayStyle style = const OverlayStyle()}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -46,10 +44,7 @@ Future<void> pump(WidgetTester tester, Size size, OverlayCue? c,
         videoWidth: size.width.toInt(),
         videoHeight: size.height.toInt(),
         cue: c,
-        tafsirMode: mode,
-        font: font,
-        color: color,
-        shadow: shadow,
+        style: style,
       ),
     ),
   ));
@@ -97,7 +92,7 @@ void main() {
 
     // أميري قرآن: U+06DD قبل الأرقام.
     await pump(tester, const Size(1080, 1920), cue(seg(number: true)),
-        font: AyahFont.amiriQuran);
+        style: const OverlayStyle(font: AyahFont.amiriQuran));
     expect(ayahPlain(tester), contains('\u00A0$endOfAyah٢٧'));
 
     await pump(tester, const Size(1080, 1920), cue(seg(number: false)));
@@ -141,7 +136,7 @@ void main() {
     await pump(tester, const Size(1080, 1920), cue(seg()));
     expect(find.text('جزء من التفسير.'), findsOneWidget);
     await pump(tester, const Size(1080, 1920), cue(seg()),
-        mode: TafsirMode.fullUnderEachPart);
+        style: const OverlayStyle(tafsirMode: TafsirMode.fullUnderEachPart));
     expect(find.text('التفسير كامل.'), findsOneWidget);
     expect(find.text('جزء من التفسير.'), findsNothing);
   });
@@ -176,7 +171,7 @@ void main() {
 
   testWidgets('both fonts render (Amiri Quran option)', (tester) async {
     await pump(tester, const Size(1080, 1920), cue(seg()),
-        font: AyahFont.amiriQuran);
+        style: const OverlayStyle(font: AyahFont.amiriQuran));
     expect(find.byKey(ayahKey), findsOneWidget);
   });
 
@@ -184,7 +179,8 @@ void main() {
   testWidgets('text color option: white with gold brackets, or all black',
       (tester) async {
     for (final c in OverlayTextColor.values) {
-      await pump(tester, const Size(1080, 1920), cue(seg()), color: c);
+      await pump(tester, const Size(1080, 1920), cue(seg()),
+          style: OverlayStyle(color: c));
       final ayah = tester.widget<Text>(find.byKey(ayahKey)).textSpan! as TextSpan;
       final open = ayah.children!.first as TextSpan;
       final close = ayah.children!.last as TextSpan;
@@ -220,7 +216,7 @@ void main() {
 
     for (final c in OverlayTextColor.values) {
       await pump(tester, const Size(1080, 1920), cue(seg()),
-          color: c, shadow: true);
+          style: OverlayStyle(color: c, shadowStrength: 0.7));
       ayah = tester.widget<Text>(find.byKey(ayahKey)).textSpan! as TextSpan;
       final opposite =
           c == OverlayTextColor.white ? overlayBlack : overlayWhite;

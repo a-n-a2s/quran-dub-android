@@ -155,7 +155,7 @@ class _ExportScreenState extends State<ExportScreen> {
       // صور النص: نفس AyahOverlayFrame ونفس الخط الزمني تبع المعاينة.
       final tl = req.timeline;
       final metrics = OverlayMetrics.forSize(plan.size.width, plan.size.height);
-      assert(overlayBandFor(metrics).top == plan.band.top);
+      assert(overlayBandFor(metrics, layout: req.style.layout).top == plan.band.top);
       for (var i = 0; i < tl.items.length; i++) {
         if (_cancelRequested || !mounted) {
           await _cleanup(workDir);
@@ -171,6 +171,7 @@ class _ExportScreenState extends State<ExportScreen> {
           band: plan.band,
           item: tl.items[i],
           style: req.style,
+          surahNames: req.surahNames,
         ));
         await File(plan.cues[i].png).writeAsBytes(png, flush: false);
         if (mounted) {

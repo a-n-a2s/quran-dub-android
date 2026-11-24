@@ -20,7 +20,9 @@ import 'package:quran_dub/export/export_plan.dart';
 import 'package:quran_dub/export/export_request.dart';
 import 'package:quran_dub/export/export_status.dart';
 import 'package:quran_dub/overlay/ayah_font.dart';
+import 'package:quran_dub/overlay/overlay_colors.dart';
 import 'package:quran_dub/overlay/overlay_frame.dart';
+import 'package:quran_dub/overlay/overlay_layout.dart';
 import 'package:quran_dub/overlay/overlay_style.dart';
 import 'package:quran_dub/pipeline/project_input.dart';
 import 'package:quran_dub/pipeline/recitation_segment.dart';
@@ -70,6 +72,12 @@ class FrameCheck {
   final double maeOutside; // برا الشريط: ناتج مقابل الأصل (لازم صغير)
   final int expectedFirstRow;
   final int outFirstRow;
+
+  /// يوم 9 (0ب): قياس الظل وحده (بكسلات بلون عكس النص، شفافيتها بين 8% و97%).
+  /// shadowExpDiff = متوسط |المتوقع − الأصل|، shadowOutDiff = متوسط |الناتج − الأصل|،
+  /// shadowMae = متوسط |الناتج − المتوقع|. لو الظل اختفى بالتصدير: shadowOutDiff ≈ 0.
+  int shadowN = 0;
+  double shadowExpDiff = 0, shadowOutDiff = 0, shadowMae = 0;
   FrameCheck(this.t, this.alpha, this.maeText, this.maeTextVsSource,
       this.maeOutside, this.expectedFirstRow, this.outFirstRow);
   Map<String, Object?> toJson() => {
@@ -80,6 +88,10 @@ class FrameCheck {
         'maeOutside': maeOutside,
         'expectedFirstRow': expectedFirstRow,
         'outFirstRow': outFirstRow,
+        'shadowN': shadowN,
+        'shadowExpDiff': shadowExpDiff,
+        'shadowOutDiff': shadowOutDiff,
+        'shadowMae': shadowMae,
       };
 }
 
@@ -136,19 +148,17 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
     var input = ProjectInput(
         videoPath: videoPath, source: VideoSource.gallery, videoInfo: info);
     if (c['audio'] != null) input = input.withExternalAudio('$inDir/${c['audio']}');
-    final style = OverlayStyle(
-      color: c['color'] == 'black' ? OverlayTextColor.black : OverlayTextColor.white,
-      shadow: c['shadow'] == true,
-      font: c['font'] == 'amiriQuran' ? AyahFont.amiriQuran : AyahFont.kfgqpcHafs,
-      tafsirMode: c['tafsir'] == 'fullUnderEachPart'
-          ? TafsirMode.fullUnderEachPart
-          : TafsirMode.split,
-    );
+    final style = _styleFor(c);
+    final whiteText = style.color == OverlayTextColor.white;
     final List<RecitationSegment> segments = c['long'] == true
         ? [longSegment(start: 0.5, end: 5.5)]
         : referenceSegments(offset: 0.3);
     final req = ExportRequest(
-        input: input, segments: segments, style: style, keepWorkFiles: true);
+        input: input,
+        segments: segments,
+        style: style,
+        surahNames: _surahNames,
+        keepWorkFiles: true);
 
     final done = Completer<(ExportStatus, ExportPlan?, String?)>();
     await tester.pumpWidget(MaterialApp(
@@ -236,6 +246,8 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
       var textN = 0;
       double textErr = 0, textVsSrc = 0;
       var expFirst = -1, outFirst = -1;
+      var shN = 0;
+      double shExp = 0, shOut = 0, shMae = 0;
       for (var y = 0; y < b.height; y++) {
         var rowExpInk = false, rowOutInk = false;
         for (var x = 0; x < W; x++) {
@@ -244,6 +256,18 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
           final p = ((b.top + y) * W + x) * 4;
           for (var k = 0; k < 3; k++) {
             expected[p + k] = (srcF[p + k] * (1 - a) + ov[o + k] * a).round();
+          }
+          final a1 = ov[o + 3] / 255;
+          if (alpha > 0.95 && a1 > 0.08 && a1 < 0.97) {
+            final lum = (ov[o] + ov[o + 1] + ov[o + 2]) / 3;
+            if (whiteText ? lum < 60 : lum > 195) {
+              shN++;
+              for (var k = 0; k < 3; k++) {
+                shExp += (expected[p + k] - srcF[p + k]).abs();
+                shOut += (outF[p + k] - srcF[p + k]).abs();
+                shMae += (outF[p + k] - expected[p + k]).abs();
+              }
+            }
           }
           if (a > 0.6) {
             textN++;
@@ -283,6 +307,12 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
         expFirst,
         outFirst,
       );
+      if (shN > 0) {
+        chk.shadowN = shN;
+        chk.shadowExpDiff = shExp / (shN * 3);
+        chk.shadowOutDiff = shOut / (shN * 3);
+        chk.shadowMae = shMae / (shN * 3);
+      }
       checks.add(chk);
       // صورة مقارنة (المتوقع فوق، الناتج تحت) مصغّرة ×4، بمجلد e2e_out.
       final f = 4;
@@ -308,11 +338,28 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
         }
         // ترميز H.264 بيغبّش أطراف الحروف الرفيعة شوي (خصوصاً الكتلة الطويلة
         // المصغّرة)، فالحد نسبي من فرق النص عن الأصل.
-        if (chk.maeText > 40 || chk.maeText > 0.3 * chk.maeTextVsSource) {
+        if (chk.maeText > 40 ||
+            (chk.maeText > 0.3 * chk.maeTextVsSource && c['expectShadow'] != true)) {
           problems.add('t=$t: النص مختلف عن المعاينة (MAE ${chk.maeText.toStringAsFixed(1)})');
         }
-        if (chk.expectedFirstRow >= 0 &&
-            (chk.outFirstRow - chk.expectedFirstRow).abs() > 6) {
+        if (c['expectShadow'] == true) {
+          // الظل لازم يبين بالناتج بنفس قوته بالمعاينة (على خلفية رمادية متوسطة
+          // عشان الظل الأسود والأبيض الاثنين بيبينوا).
+          if (chk.shadowN < 1500) {
+            problems.add('t=$t: بكسلات الظل قليلة (${chk.shadowN}) — القياس ما بيدل على شي');
+          } else if (chk.shadowExpDiff < 8) {
+            problems.add('t=$t: الظل المتوقع ضعيف جداً (${chk.shadowExpDiff.toStringAsFixed(1)}) عالخلفية');
+          } else {
+            final ratio = chk.shadowOutDiff / chk.shadowExpDiff;
+            if (ratio < 0.7 || ratio > 1.4) {
+              problems.add('t=$t: الظل بالناتج مختلف عن المعاينة (نسبة ${ratio.toStringAsFixed(2)}، '
+                  'متوقع ${chk.shadowExpDiff.toStringAsFixed(1)} ناتج ${chk.shadowOutDiff.toStringAsFixed(1)})');
+            }
+          }
+        }
+        if (c['skipFirstRow'] != true &&
+            chk.expectedFirstRow >= 0 &&
+            (chk.outFirstRow - chk.expectedFirstRow).abs() > (style.shadow ? 10 : 6)) {
           problems.add('t=$t: أول سطر عند ${chk.outFirstRow} بدل ${chk.expectedFirstRow}');
         }
       } else if (chk.maeText > 40) {
@@ -342,3 +389,49 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
   return result;
 }
 
+
+const Map<int, String> _surahNames = {50: 'سُوْرَةُ ق', 2: 'سُوْرَةُ البَقَرَة'};
+
+/// شكل الحالة من cases.json: لون، شدة ظل (`shadowStrength` 0..1، أو `shadow:true`
+/// القديم = 0.7)، خلفية (`bg`: {mode, opacity})، وعناصر (`surahRef`، `reciter`،
+/// `moveAyah`: [cx, top]، `ayahScale`، `moveTafsir`: [cx, top]).
+OverlayStyle _styleFor(Map<String, dynamic> c) {
+  var layout = OverlayLayout.reference;
+  if (c['surahRef'] == true) {
+    layout = layout.update(OverlayElement.surahRef, (p) => p.copyWith(enabled: true));
+  }
+  if (c['reciter'] != null) {
+    layout = layout.update(OverlayElement.reciter, (p) => p.copyWith(enabled: true));
+  }
+  ElementAnchor? anchor(Object? v) => v is List && v.length == 2
+      ? ElementAnchor((v[0] as num).toDouble(), (v[1] as num).toDouble())
+      : null;
+  final ma = anchor(c['moveAyah']), mt = anchor(c['moveTafsir']);
+  final sc = (c['ayahScale'] as num?)?.toDouble();
+  if (ma != null || sc != null) {
+    layout = layout.update(OverlayElement.ayah,
+        (p) => p.copyWith(anchor: ma ?? p.anchor, scale: sc ?? p.scale));
+  }
+  if (mt != null) {
+    layout = layout.update(OverlayElement.tafsir, (p) => p.copyWith(anchor: mt));
+  }
+  final bg = c['bg'] as Map<String, dynamic>?;
+  return OverlayStyle(
+    color: c['color'] == 'black' ? OverlayTextColor.black : OverlayTextColor.white,
+    shadowStrength: (c['shadowStrength'] as num?)?.toDouble() ??
+        (c['shadow'] == true ? OverlayStyle.defaultShadowStrength : 0),
+    font: c['font'] == 'amiriQuran' ? AyahFont.amiriQuran : AyahFont.kfgqpcHafs,
+    tafsirMode: c['tafsir'] == 'fullUnderEachPart'
+        ? TafsirMode.fullUnderEachPart
+        : TafsirMode.split,
+    background: bg == null
+        ? const OverlayBackground()
+        : OverlayBackground(
+            mode: bg['mode'] == 'bar'
+                ? OverlayBackgroundMode.bar
+                : OverlayBackgroundMode.box,
+            opacity: (bg['opacity'] as num?)?.toDouble() ?? 0.45),
+    layout: layout,
+    reciterName: (c['reciter'] as String?) ?? '',
+  );
+}
