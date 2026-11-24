@@ -54,7 +54,16 @@ class AyahCueOverlay(private val plan: ExportPlan) : BitmapOverlay() {
         if (i < 0) return transparent
         if (i != loadedIndex) {
             val cue = plan.cues[i]
-            val bmp = BitmapFactory.decodeFile(cue.png)
+            // يوم 9 (0ب): الـ PNG بألفا "مباشرة" (straight) وشيدر Media3 بيمزج
+            // بالألفا مرة تانية، فلو انفكّت الصورة بألفا مضروبة مسبقاً (الافتراضي)
+            // بتنضرب الألفا مرتين: الظل الأبيض (لنص أسود) بيضعف جداً (قياس
+            // e2e: 38% بس من المعاينة)، والأسود ما بيتأثر (rgb=0). لذلك بنفكها
+            // بدون ضرب مسبق.
+            val opts = BitmapFactory.Options().apply {
+                inPremultiplied = false
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val bmp = BitmapFactory.decodeFile(cue.png, opts)
                 ?: throw VideoFrameProcessingException("ما قدرنا نقرأ صورة النص: ${cue.png}")
             loadedBitmap = bmp
             loadedIndex = i
