@@ -7,6 +7,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build debug APK
@@ -88,3 +91,18 @@ jobs:
               echo "- $(basename "$f"): **$(du -h "$f" | cut -f1)**"
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: "نشر Release دائم للقطة هالمرحلة (day5)"
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cp build/app/outputs/flutter-apk/app-debug.apk "AyahStudio-day5-debug.apk"
+          if gh release view "day5-apk" >/dev/null 2>&1; then
+            gh release upload "day5-apk" "AyahStudio-day5-debug.apk" --clobber
+          else
+            gh release create "day5-apk" "AyahStudio-day5-debug.apk" \
+              --title "يوم 5 — خط الأنابيب الكامل" --notes "صوت ← تعرف ← مطابقة ← آيات بتوقيتها، بكل الحالات (بسملة، استعاذة، آيات مستنتجة). زر اختيار ملف صوت أو فيديو من جوالك لتجربته. لسا بدون عرض النص فوق الفيديو ولا كاميرا بالتطبيق." --prerelease \
+              --target "$GITHUB_SHA"
+          fi
