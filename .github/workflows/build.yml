@@ -130,5 +130,5 @@ jobs:
           else
             gh release create "day9-apk" "AyahStudio-day9-debug.apk" \
               --title "يوم 9 — محرر التخصيص" --notes "محرر تقدر فيه تسحب/تكبر/تصغر كل عنصر (الآية، التفسير، اسم السورة، اسم القارئ) براحتك، تتحكم بشدة الظل، وتستخدم قوالب جاهزة أو تحفظ قوالبك الخاصة. هاي آخر نسخة من الأيام الـ 9 الأولى." --prerelease \
-              --target "$GITHUB_SHA"
+              --target "a4c4c7d46840edf37c013d893d30fa877f158dc9"
           fi
