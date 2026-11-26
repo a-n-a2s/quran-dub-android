@@ -117,3 +117,18 @@ jobs:
               echo "- $(basename "$f"): **$(du -h "$f" | cut -f1)**"
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: "نشر Release دائم للقطة هالمرحلة (day9)"
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cp build/app/outputs/flutter-apk/app-debug.apk "AyahStudio-day9-debug.apk"
+          if gh release view "day9-apk" >/dev/null 2>&1; then
+            gh release upload "day9-apk" "AyahStudio-day9-debug.apk" --clobber
+          else
+            gh release create "day9-apk" "AyahStudio-day9-debug.apk" \
+              --title "يوم 9 — محرر التخصيص" --notes "محرر تقدر فيه تسحب/تكبر/تصغر كل عنصر (الآية، التفسير، اسم السورة، اسم القارئ) براحتك، تتحكم بشدة الظل، وتستخدم قوالب جاهزة أو تحفظ قوالبك الخاصة. هاي آخر نسخة من الأيام الـ 9 الأولى." --prerelease \
+              --target "$GITHUB_SHA"
+          fi
