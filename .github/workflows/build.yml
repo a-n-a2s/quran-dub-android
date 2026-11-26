@@ -7,6 +7,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build debug APK
@@ -88,3 +91,18 @@ jobs:
               echo "- $(basename "$f"): **$(du -h "$f" | cut -f1)**"
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: "نشر Release دائم للقطة هالمرحلة (day4)"
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cp build/app/outputs/flutter-apk/app-debug.apk "AyahStudio-day4-debug.apk"
+          if gh release view "day4-apk" >/dev/null 2>&1; then
+            gh release upload "day4-apk" "AyahStudio-day4-debug.apk" --clobber
+          else
+            gh release create "day4-apk" "AyahStudio-day4-debug.apk" \
+              --title "يوم 4 — أول تعرف صوتي حقيقي" --notes "أول نسخة فيها تعرف فعلي على الصوت شغّال بالكامل على الجهاز (بدون سيرفر). زر تجربة بالشاشة الرئيسية بيحمّل النموذج (أول مرة بس) ويحلل مقطع تلاوة ثابت (الفاتحة) ويطبع النتيجة." --prerelease \
+              --target "$GITHUB_SHA"
+          fi
