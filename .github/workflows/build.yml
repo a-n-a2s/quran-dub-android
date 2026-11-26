@@ -117,3 +117,18 @@ jobs:
               echo "- $(basename "$f"): **$(du -h "$f" | cut -f1)**"
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: "نشر Release دائم للقطة هالمرحلة (day7)"
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cp build/app/outputs/flutter-apk/app-debug.apk "AyahStudio-day7-debug.apk"
+          if gh release view "day7-apk" >/dev/null 2>&1; then
+            gh release upload "day7-apk" "AyahStudio-day7-debug.apk" --clobber
+          else
+            gh release create "day7-apk" "AyahStudio-day7-debug.apk" \
+              --title "يوم 7 — عرض النص فوق الفيديو (معاينة)" --notes "الآية والتفسير صاروا يظهروا فوق الفيديو بالتصميم المطلوب (الخط العثماني، الأقواس الذهبية، تزامن مع الصوت، نص أبيض أو أسود حسب خلفية الفيديو). هاي معاينة جوا التطبيق بس، لسا بدون تصدير فيديو نهائي." --prerelease \
+              --target "$GITHUB_SHA"
+          fi
