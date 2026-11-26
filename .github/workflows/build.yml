@@ -7,6 +7,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build debug APK
@@ -49,3 +52,18 @@ jobs:
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: "نشر Release دائم للقطة هالمرحلة (day3)"
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cp build/app/outputs/flutter-apk/app-debug.apk "AyahStudio-day3-debug.apk"
+          if gh release view "day3-apk" >/dev/null 2>&1; then
+            gh release upload "day3-apk" "AyahStudio-day3-debug.apk" --clobber
+          else
+            gh release create "day3-apk" "AyahStudio-day3-debug.apk" \
+              --title "يوم 3 — خوارزمية المطابقة" --notes "انضافت خوارزمية مطابقة النص مع القرآن (بدون صوت حقيقي لسا). الشاشة الرئيسية فيها فحص ذاتي بيطبع نتيجة مطابقة 3 نصوص تجريبية." --prerelease \
+              --target "$GITHUB_SHA"
+          fi
