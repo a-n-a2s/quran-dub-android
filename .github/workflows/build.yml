@@ -117,3 +117,18 @@ jobs:
               echo "- $(basename "$f"): **$(du -h "$f" | cut -f1)**"
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: "نشر Release دائم للقطة هالمرحلة (day8)"
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cp build/app/outputs/flutter-apk/app-debug.apk "AyahStudio-day8-debug.apk"
+          if gh release view "day8-apk" >/dev/null 2>&1; then
+            gh release upload "day8-apk" "AyahStudio-day8-debug.apk" --clobber
+          else
+            gh release create "day8-apk" "AyahStudio-day8-debug.apk" \
+              --title "يوم 8 — التصدير: فيديو نهائي محروق فيه النص" --notes "أول نسخة تقدر تصدّر فيديو نهائي فعلي والنص محروق جواه، وتحفظه بمعرض الجوال أو تشاركه مباشرة (واتساب وغيره)." --prerelease \
+              --target "$GITHUB_SHA"
+          fi
