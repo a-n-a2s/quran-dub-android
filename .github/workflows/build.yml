@@ -65,5 +65,5 @@ jobs:
           else
             gh release create "day3-apk" "AyahStudio-day3-debug.apk" \
               --title "يوم 3 — خوارزمية المطابقة" --notes "انضافت خوارزمية مطابقة النص مع القرآن (بدون صوت حقيقي لسا). الشاشة الرئيسية فيها فحص ذاتي بيطبع نتيجة مطابقة 3 نصوص تجريبية." --prerelease \
-              --target "$GITHUB_SHA"
+              --target "2d5f309f59fed05c19a84d263ac5d123440752ff"
           fi
