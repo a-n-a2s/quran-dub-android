@@ -130,5 +130,5 @@ jobs:
           else
             gh release create "day8-apk" "AyahStudio-day8-debug.apk" \
               --title "يوم 8 — التصدير: فيديو نهائي محروق فيه النص" --notes "أول نسخة تقدر تصدّر فيديو نهائي فعلي والنص محروق جواه، وتحفظه بمعرض الجوال أو تشاركه مباشرة (واتساب وغيره)." --prerelease \
-              --target "$GITHUB_SHA"
+              --target "92225974c8f437f3c1567b000ca5a861f5abe82b"
           fi
