@@ -104,5 +104,5 @@ jobs:
           else
             gh release create "day4-apk" "AyahStudio-day4-debug.apk" \
               --title "يوم 4 — أول تعرف صوتي حقيقي" --notes "أول نسخة فيها تعرف فعلي على الصوت شغّال بالكامل على الجهاز (بدون سيرفر). زر تجربة بالشاشة الرئيسية بيحمّل النموذج (أول مرة بس) ويحلل مقطع تلاوة ثابت (الفاتحة) ويطبع النتيجة." --prerelease \
-              --target "$GITHUB_SHA"
+              --target "8648de42b94ed255958d7da816d0bb6d6b4511d1"
           fi
