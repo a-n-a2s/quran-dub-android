@@ -62,5 +62,5 @@ jobs:
           else
             gh release create "day2-apk" "AyahStudio-day2-debug.apk" \
               --title "يوم 2 — قاعدة بيانات القرآن" --notes "القرآن كامل (الرسم العثماني) والتفسير الميسر صاروا محمّلين جوا التطبيق. الشاشة الرئيسية بتعرض عدد السور والآيات وأول آية (الفاتحة) كتأكيد. ما في تسجيل ولا تحليل فيديو بعد." --prerelease \
-              --target "$GITHUB_SHA"
+              --target "4a3f3ea1ec0d8ac59c8adf12ec4e6577fd7d8b13"
           fi
