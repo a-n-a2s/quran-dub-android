@@ -117,3 +117,18 @@ jobs:
               echo "- $(basename "$f"): **$(du -h "$f" | cut -f1)**"
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: "نشر Release دائم للقطة هالمرحلة (day6)"
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cp build/app/outputs/flutter-apk/app-debug.apk "AyahStudio-day6-debug.apk"
+          if gh release view "day6-apk" >/dev/null 2>&1; then
+            gh release upload "day6-apk" "AyahStudio-day6-debug.apk" --clobber
+          else
+            gh release create "day6-apk" "AyahStudio-day6-debug.apk" \
+              --title "يوم 6 — رفع من المعرض أو تصوير بالكاميرا" --notes "أول نسخة فيها الشاشة الرئيسية الحقيقية: زر رفع مقطع من معرض الصور، وزر تصوير (تسجيل فيديو من داخل التطبيق مباشرة)، مع تحليل الفيديو. لسا بدون عرض الآية والتفسير فوق الفيديو (هاد يوم 7)." --prerelease \
+              --target "$GITHUB_SHA"
+          fi
