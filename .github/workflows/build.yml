@@ -62,5 +62,5 @@ jobs:
           else
             gh release create "day1-apk" "AyahStudio-day1-debug.apk" \
               --title "يوم 1 — الهيكلة الأولية" --notes "أول نسخة: مشروع Flutter فاضي تقريباً + شاشة ترحيبية بسيطة، بدون أي ميزة قرآن بعد (الهدف وقتها كان التأكد إنه CI وبناء APK شغّالين)." --prerelease \
-              --target "$GITHUB_SHA"
+              --target "9f00350fbdfe7c9ab817f5073ad1aeb9ba5e78b9"
           fi
