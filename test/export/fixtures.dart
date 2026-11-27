@@ -36,3 +36,28 @@ RecitationSegment longSegment({double start = 0, double end = 5}) =>
         ayah: 255, text: ayah2_255, showAyahNumber: true,
         tafsir: tafsir2_255, tafsirFull: tafsir2_255, tafsirSplit: tafsir2_255,
         confidence: 1);
+
+/// مقاطع بعد تصحيح يدوي (يوم 10، `export-e2e.yml` حالة `edited_manual_segments`):
+/// (1) آية حدودها الزمنية انسحبت يدوياً (زي تصحيح انزياح 1-2 ثانية بالتعرف
+/// التلقائي)، (2) آية ثانية اتغيّرت لآية تانية تماماً عن طريق المحرر (نص
+/// وتفسير مختلفين عن أي تعرف تلقائي محتمل)، (3) مقطع "مش قرآن" مُضاف يدوياً
+/// بنص مستخدم (مقدمة/دعاء). بتتأكد إن المحرر اليدوي (التصحيح، تغيير الآية،
+/// والإضافة اليدوية) بينتج مقاطع تصدّر بنفس شكل أي مقطع تاني، بدون أي فرق
+/// بمسار التصدير بين مقطع آلي ومقطع معدّل يدوياً.
+List<RecitationSegment> editedSegments({double offset = 0}) => [
+      RecitationSegment(
+        start: offset + 0.5, end: offset + 2.6, kind: SegmentKind.fullAyah,
+        surah: 50, ayah: 28, text: ayah50_28, showAyahNumber: true,
+        tafsir: tafsir50_28, tafsirFull: tafsir50_28, tafsirSplit: tafsir50_28,
+        confidence: 1, needsReview: false),
+      RecitationSegment(
+        start: offset + 2.6, end: offset + 4.6, kind: SegmentKind.fullAyah,
+        surah: 2, ayah: 255, text: ayah2_255, showAyahNumber: true,
+        tafsir: tafsir2_255, tafsirFull: tafsir2_255, tafsirSplit: tafsir2_255,
+        confidence: 1, needsReview: false),
+      RecitationSegment(
+        start: offset + 4.6, end: offset + 6.3, kind: SegmentKind.nonQuran,
+        confidence: 1,
+        userText: 'بسم الله، وقفة قبل الآية',
+      ),
+    ];

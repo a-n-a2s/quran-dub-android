@@ -113,26 +113,50 @@ class RecitationSegment {
         _ => true,
       };
 
-  RecitationSegment copyWith({String? userText, String? tafsir}) =>
+  /// (يوم 10، المحرر 2): زوّدنا الحقول اللي ممكن المحرر يعدّلها (التوقيت،
+  /// "بده مراجعة"...) بدون ما نكسر استخدامات `copyWith(userText: ...)` و
+  /// `copyWith(tafsir: ...)` الموجودة من قبل.
+  RecitationSegment copyWith({
+    double? start,
+    double? end,
+    SegmentKind? kind,
+    int? surah,
+    int? ayah,
+    int? part,
+    int? partCount,
+    String? text,
+    bool? showAyahNumber,
+    String? tafsir,
+    String? tafsirFull,
+    String? tafsirSplit,
+    double? confidence,
+    bool? needsReview,
+    String? suggestedRef,
+    bool clearSuggestedRef = false,
+    String? userText,
+    bool clearUserText = false,
+    String? asrText,
+    bool? inferred,
+  }) =>
       RecitationSegment(
-        start: start,
-        end: end,
-        kind: kind,
-        surah: surah,
-        ayah: ayah,
-        part: part,
-        partCount: partCount,
-        text: text,
-        showAyahNumber: showAyahNumber,
+        start: start ?? this.start,
+        end: end ?? this.end,
+        kind: kind ?? this.kind,
+        surah: surah ?? this.surah,
+        ayah: ayah ?? this.ayah,
+        part: part ?? this.part,
+        partCount: partCount ?? this.partCount,
+        text: text ?? this.text,
+        showAyahNumber: showAyahNumber ?? this.showAyahNumber,
         tafsir: tafsir ?? this.tafsir,
-        tafsirFull: tafsirFull,
-        tafsirSplit: tafsirSplit,
-        confidence: confidence,
-        needsReview: needsReview,
-        suggestedRef: suggestedRef,
-        userText: userText ?? this.userText,
-        asrText: asrText,
-        inferred: inferred,
+        tafsirFull: tafsirFull ?? this.tafsirFull,
+        tafsirSplit: tafsirSplit ?? this.tafsirSplit,
+        confidence: confidence ?? this.confidence,
+        needsReview: needsReview ?? this.needsReview,
+        suggestedRef: clearSuggestedRef ? null : (suggestedRef ?? this.suggestedRef),
+        userText: clearUserText ? null : (userText ?? this.userText),
+        asrText: asrText ?? this.asrText,
+        inferred: inferred ?? this.inferred,
       );
 
   String get kindLabel => switch (kind) {
@@ -171,7 +195,43 @@ class RecitationSegment {
         'confidence': double.parse(confidence.toStringAsFixed(3)),
         'needs_review': needsReview,
         'suggested_ref': suggestedRef,
+        'user_text': userText,
         'asr_text': asrText,
         'inferred': inferred,
       };
+
+  /// من [toJson] (يوم 10: تخزين تعديلات المحرر محلياً، `ProjectEditStore`).
+  /// حقل ناقص أو بنوع غلط بياخد الافتراضي، فملف تالف جزئياً ما بيوقّع
+  /// التطبيق (نفس مبدأ `OverlayTemplate.fromJson`).
+  static RecitationSegment? fromJson(Object? j) {
+    if (j is! Map) return null;
+    final start = j['start'], end = j['end'];
+    if (start is! num || end is! num) return null;
+    SegmentKind kind = SegmentKind.nonQuran;
+    for (final k in SegmentKind.values) {
+      if (k.name == j['kind']) kind = k;
+    }
+    int? asInt(Object? v) => v is num ? v.toInt() : null;
+    String asStr(Object? v, [String fallback = '']) => v is String ? v : fallback;
+    return RecitationSegment(
+      start: start.toDouble(),
+      end: end.toDouble(),
+      kind: kind,
+      surah: asInt(j['surah']),
+      ayah: asInt(j['ayah']),
+      part: asInt(j['part']) ?? 1,
+      partCount: asInt(j['part_count']) ?? 1,
+      text: asStr(j['text']),
+      showAyahNumber: j['show_ayah_number'] == true,
+      tafsir: asStr(j['tafsir']),
+      tafsirFull: asStr(j['tafsir_full']),
+      tafsirSplit: asStr(j['tafsir_split']),
+      confidence: (j['confidence'] is num) ? (j['confidence'] as num).toDouble() : 0,
+      needsReview: j['needs_review'] == true,
+      suggestedRef: j['suggested_ref'] is String ? j['suggested_ref'] as String : null,
+      userText: j['user_text'] is String ? j['user_text'] as String : null,
+      asrText: asStr(j['asr_text']),
+      inferred: j['inferred'] == true,
+    );
+  }
 }

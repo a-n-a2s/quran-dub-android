@@ -7,7 +7,12 @@ import 'package:flutter/scheduler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
+import '../asr/native_audio_decoder.dart';
 import '../data/quran_database.dart';
+import '../editor/project_edit_store.dart';
+import '../editor/segment_scale_remap.dart';
+import '../editor/timeline_geometry.dart';
+import '../editor/waveform.dart';
 import '../export/export_request.dart';
 import '../overlay/ayah_font.dart';
 import '../overlay/overlay_frame.dart';
@@ -18,9 +23,14 @@ import '../overlay/overlay_timeline.dart';
 import '../overlay/playback_clock.dart';
 import '../overlay/snap_guides.dart';
 import '../pipeline/project_input.dart';
+import '../pipeline/quran_text_source.dart';
+import '../pipeline/recitation_pipeline.dart';
 import '../pipeline/recitation_segment.dart';
+import '../pipeline/segment_factory.dart';
 import '../platform/video_info.dart';
 import 'export_screen.dart';
+import 'widgets/segment_detail_sheet.dart';
+import 'widgets/segment_timeline_view.dart';
 
 // هوية التطبيق (أخضر غامق + ذهبي): بشكل مبسّط لحد يوم 22 (تلميع الواجهات).
 const Color _green = Color(0xFF0E2F24);
@@ -50,6 +60,7 @@ enum _Tab {
   elements('عناصر'),
   fonts('خطوط'),
   colors('ألوان'),
+  timeline('الخط الزمني'),
   templates('قوالب');
 
   final String label;
@@ -96,6 +107,17 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
 
   late OverlayTimeline _timeline;
   late OverlayStyle _style;
+
+  /// (يوم 10، المحرر 2): نسخة قابلة للتعديل من المقاطع — تغيير آية، حذف،
+  /// إضافة، وتحريك الحدود كلها بتعدّل هالقائمة، وبعدين `_rebuildTimeline`
+  /// بيعيد بناء [_timeline] منها. القائمة لازم تضل مرتبة بالبداية (نفس ترتيب
+  /// `widget.segments` الأصلي) عشان `index` بـ [TimelineSegment] يتطابق مع
+  /// منطق الجيران بـ [clampSegmentDrag].
+  late List<RecitationSegment> _segments;
+  ProjectEditStore? _editStore;
+  WaveformPeaks? _peaks;
+  int? _selectedSegment;
+  QuranTextSource? _textSource;
 
   /// اللون اختاره المستخدم بإيده → ما بنغيّره تلقائياً.
   bool _colorTouched = false;
@@ -146,9 +168,8 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   void initState() {
     super.initState();
     _style = OverlayStyle(tafsirMode: widget.initialTafsirMode);
-    final info = widget.input.videoInfo;
-    _timeline = OverlayTimeline.build(widget.segments,
-        videoDuration: info.durationMs > 0 ? info.durationSeconds : null);
+    _segments = [...widget.segments];
+    _rebuildTimeline();
     _ticker = createTicker((_) {
       _time.value = _clock.now(_wallSeconds);
       final cur = _timeline.cueAt(_time.value)?.item.index;
@@ -158,6 +179,58 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     _autoPickColor();
     _loadSurahNames();
     _openTemplates();
+    _openEditStore();
+    _loadWaveform();
+    RecitationPipeline.instance.textSource.then((t) {
+      if (mounted) _textSource = t;
+    });
+  }
+
+  /// إعادة بناء [_timeline] من [_segments] الحالية (بعد أي تعديل يدوي).
+  void _rebuildTimeline() {
+    final info = widget.input.videoInfo;
+    _timeline = OverlayTimeline.build(_segments,
+        videoDuration: info.durationMs > 0 ? info.durationSeconds : null);
+  }
+
+  /// فتح مخزن تعديلات هالمشروع، وتحميل آخر نسخة محفوظة منه لو موجودة
+  /// (يوم 10، القسم 6: "التعديلات اليدوية ما تنمسح لما ترجع للمحرر").
+  Future<void> _openEditStore() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final store = ProjectEditStore(
+          File('${dir.path}/${projectEditFileName(widget.input.videoPath)}'));
+      _editStore = store;
+      final saved = await store.load();
+      if (saved != null && saved.isNotEmpty && mounted) {
+        setState(() {
+          _segments = saved;
+          _rebuildTimeline();
+        });
+      }
+    } catch (_) {
+      // بدون تخزين: التعديلات بتضل بالذاكرة بس لهالجلسة.
+    }
+  }
+
+  void _saveEdits() {
+    final store = _editStore;
+    if (store == null) return;
+    store.save(_segments).catchError((_) {});
+  }
+
+  /// استخراج موجة الصوت من نفس ملف الـ WAV اللي خط الأنابيب استعمله (أو
+  /// فكّه الآن لو المصدر مش WAV جاهز)، بـ isolate عشان ما يجمّد الواجهة.
+  Future<void> _loadWaveform() async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final wavPath = await NativeAudioDecoder.ensureWav(
+          widget.input.recognitionSourcePath, tempDir);
+      final peaks = await extractPeaksFromWavFile(wavPath);
+      if (mounted) setState(() => _peaks = peaks);
+    } catch (_) {
+      // بدون موجة: الخط الزمني بيطلع بخلفية فاضية (السحب والتعديل لسا شغالين).
+    }
   }
 
   /// أسماء السور من جدول `surahs` (للعنصر "اسم السورة ورقم الآية").
@@ -265,7 +338,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
       builder: (_) => ExportScreen(
         request: ExportRequest(
           input: widget.input,
-          segments: widget.segments,
+          segments: _segments,
           style: _style,
           surahNames: _surahNames,
         ),
@@ -465,6 +538,258 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   }
 
   // ---------------------------------------------------------------------
+  // تعديل المقاطع يدوياً (يوم 10، المحرر 2: التصحيح اليدوي)
+  // ---------------------------------------------------------------------
+
+  /// قائمة (بداية، نهاية) كل المقاطع بالترتيب الحالي لـ [_segments] (لنفس
+  /// الترتيب اللي [TimelineSegment.index] بيشاوره بالخط الزمني).
+  List<(double, double)> get _segmentRanges =>
+      [for (final s in _segments) (s.start, s.end)];
+
+  double get _duration => widget.input.videoInfo.durationSeconds;
+
+  void _replaceSegment(int index, RecitationSegment seg) {
+    setState(() {
+      _segments = [..._segments];
+      _segments[index] = seg;
+      _rebuildTimeline();
+    });
+    _saveEdits();
+  }
+
+  /// سحب حد مقطع بالخط الزمني: بنطبّق [clampSegmentDrag] عشان ما يتخطى جاره
+  /// ولا ينزل عن الحد الأدنى، وبعدين منحدّث [_segments].
+  void _onDragHandle(int index, bool isStart, double newSeconds) {
+    if (index < 0 || index >= _segments.length) return;
+    final seg = _segments[index];
+    final bounds = clampSegmentDrag(
+      segments: _segmentRanges,
+      index: index,
+      newStart: isStart ? newSeconds : seg.start,
+      newEnd: isStart ? seg.end : newSeconds,
+      duration: _duration > 0 ? _duration : seg.end,
+    );
+    _replaceSegment(index, seg.copyWith(start: bounds.start, end: bounds.end));
+  }
+
+  /// نفس المنطق، من حقول لوحة التفاصيل (رقمياً بدل السحب).
+  void _onBoundsFromSheet(int index, double start, double end) {
+    if (index < 0 || index >= _segments.length) return;
+    final bounds = clampSegmentDrag(
+      segments: _segmentRanges,
+      index: index,
+      newStart: start,
+      newEnd: end,
+      duration: _duration > 0 ? _duration : end,
+    );
+    _replaceSegment(index, _segments[index].copyWith(start: bounds.start, end: bounds.end));
+  }
+
+  /// تغيير آية مقطع موجود: نفس رقمه (ما في إزاحة لباقي المقاطع ولا لمفاتيح
+  /// `segmentScales`، لأنه استبدال بنفس المكان مش حذف/إضافة).
+  Future<void> _changeAyah(int index, int surah, int ayah) async {
+    final text = _textSource ?? await RecitationPipeline.instance.textSource;
+    _textSource = text;
+    if (index < 0 || index >= _segments.length) return;
+    final old = _segments[index];
+    final seg = buildWholeAyahSegment(
+      text: text,
+      surah: surah,
+      ayah: ayah,
+      start: old.start,
+      end: old.end,
+    );
+    _replaceSegment(index, seg);
+  }
+
+  void _onUserTextChanged(int index, String value) {
+    if (index < 0 || index >= _segments.length) return;
+    _replaceSegment(index, _segments[index].copyWith(userText: value));
+  }
+
+  void _onConfirmReview(int index) {
+    if (index < 0 || index >= _segments.length) return;
+    _replaceSegment(
+        index, _segments[index].copyWith(needsReview: false, inferred: false));
+  }
+
+  /// حذف مقطع: كل مقطع بعده بيرجع مرتبة وحدة، ونفس الشي لمفاتيح
+  /// `segmentScales` (يوم 9 طلب صراحة إعادة ربطها هون).
+  void _deleteSegment(int index) {
+    if (index < 0 || index >= _segments.length) return;
+    final mapping = mappingForDelete(_segments.length, index);
+    setState(() {
+      _segments = [..._segments]..removeAt(index);
+      _style = _style.copyWith(
+          segmentScales: remapSegmentScales(_style.segmentScales, mapping));
+      if (_selectedSegment == index) _selectedSegment = null;
+      _rebuildTimeline();
+    });
+    _saveEdits();
+  }
+
+  /// إضافة مقطع جديد بمكان [insertAt] (مرتّب حسب البداية): بيزحزح كل مقطع
+  /// بعده، وبيعيد ربط `segmentScales` لنفس السبب.
+  void _insertSegment(RecitationSegment seg) {
+    var insertAt = _segments.indexWhere((s) => s.start > seg.start);
+    if (insertAt < 0) insertAt = _segments.length;
+    final mapping = mappingForInsert(_segments.length, insertAt);
+    setState(() {
+      _segments = [..._segments]..insert(insertAt, seg);
+      _style = _style.copyWith(
+          segmentScales: remapSegmentScales(_style.segmentScales, mapping));
+      _rebuildTimeline();
+    });
+    _saveEdits();
+  }
+
+  double _scaleOfSegment(int index, OverlayElement e) =>
+      _style.segmentScales[index]?[e] ?? _style.layout[e].scale;
+
+  void _onSegmentScaleChanged(int index, OverlayElement e, double v) {
+    final mine = {...?_style.segmentScales[index]};
+    mine[e] = clampScale(v);
+    setState(() => _style = _style.copyWith(
+        segmentScales: {..._style.segmentScales, index: mine}));
+    _saveEdits();
+  }
+
+  void _openSegmentDetail(int index) {
+    if (index < 0 || index >= _segments.length) return;
+    setState(() => _selectedSegment = index);
+    showSegmentDetailSheet(
+      context,
+      segment: _segments[index],
+      index: index,
+      duration: _duration > 0 ? _duration : _segments[index].end,
+      surahName: (n) => _surahLookup(n) ?? 'سورة $n',
+      scaleOf: (e) => _scaleOfSegment(index, e),
+      onScaleChanged: (e, v) => _onSegmentScaleChanged(index, e, v),
+      onBoundsChanged: (s, e) => _onBoundsFromSheet(index, s, e),
+      onChangeAyah: (s, a) => _changeAyah(index, s, a),
+      onUserTextChanged: (t) => _onUserTextChanged(index, t),
+      onDelete: () => _deleteSegment(index),
+      onConfirmReview: () => _onConfirmReview(index),
+    ).whenComplete(() {
+      if (mounted) setState(() => _selectedSegment = null);
+    });
+  }
+
+  /// إضافة مقطع يدوياً: نافذة بسيطة لاختيار نوع المقطع (آية أو نص غير
+  /// قرآني) ونطاق وقت (مقترح تلقائياً من أول فراغ بعد موقع التشغيل الحالي).
+  Future<void> _addSegmentFlow() async {
+    final after = _time.value;
+    final suggestion = nextFreeRange(_segmentRanges,
+        afterSeconds: after, duration: _duration > 0 ? _duration : after + 2);
+    final start = suggestion?.$1 ?? after;
+    final end = suggestion?.$2 ?? (after + 2);
+    bool asAyah = true;
+    int? pickedSurah, pickedAyah;
+    String pickedLabel = '';
+    final searchCtl = TextEditingController();
+    var searchResults = const <dynamic>[];
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(builder: (ctx, setD) {
+          Future<void> search(String q) async {
+            if (q.trim().isEmpty) {
+              setD(() => searchResults = const []);
+              return;
+            }
+            try {
+              final r = await QuranDatabase.instance.searchAyahText(q.trim());
+              setD(() => searchResults = r);
+            } catch (_) {}
+          }
+
+          return AlertDialog(
+            title: const Text('إضافة مقطع'),
+            content: SizedBox(
+              width: 360,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SegmentedButton<bool>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(value: true, label: Text('آية')),
+                      ButtonSegment(value: false, label: Text('نص غير قرآني')),
+                    ],
+                    selected: {asAyah},
+                    onSelectionChanged: (s) => setD(() => asAyah = s.first),
+                  ),
+                  const SizedBox(height: 10),
+                  Text('من ${start.toStringAsFixed(1)}ث إلى ${end.toStringAsFixed(1)}ث',
+                      style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                  if (suggestion == null)
+                    const Text('ما في مكان فاضي بعد هالنقطة، جرّب موقع تاني بالفيديو.',
+                        style: TextStyle(fontSize: 11, color: Colors.orange)),
+                  if (asAyah) ...[
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: searchCtl,
+                      textDirection: TextDirection.rtl,
+                      decoration: const InputDecoration(
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                          hintText: 'ابحث بنص الآية',
+                          suffixIcon: Icon(Icons.search)),
+                      onChanged: search,
+                    ),
+                    if (pickedLabel.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text('مختار: $pickedLabel',
+                            style: const TextStyle(fontSize: 12, color: _gold)),
+                      ),
+                    for (final a in searchResults.cast<dynamic>().take(6))
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(a.textUthmani as String,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textDirection: TextDirection.rtl),
+                        subtitle: Text('${a.surahNumber}:${a.ayahNumber}'),
+                        onTap: () => setD(() {
+                          pickedSurah = a.surahNumber as int;
+                          pickedAyah = a.ayahNumber as int;
+                          pickedLabel = '${a.surahNumber}:${a.ayahNumber}';
+                        }),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+              FilledButton(
+                onPressed: suggestion == null || (asAyah && pickedSurah == null)
+                    ? null
+                    : () => Navigator.pop(ctx, true),
+                child: const Text('إضافة'),
+              ),
+            ],
+          );
+        }),
+      ),
+    );
+    searchCtl.dispose();
+    if (result != true || suggestion == null || !mounted) return;
+    if (asAyah && pickedSurah != null && pickedAyah != null) {
+      final text = _textSource ?? await RecitationPipeline.instance.textSource;
+      _textSource = text;
+      _insertSegment(buildWholeAyahSegment(
+          text: text, surah: pickedSurah!, ayah: pickedAyah!, start: start, end: end));
+    } else if (!asAyah) {
+      _insertSegment(buildUserTextSegment(start: start, end: end));
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // البناء
   // ---------------------------------------------------------------------
 
@@ -614,13 +939,14 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                 onSelectionChanged: (s) => setState(() => _tab = s.first),
               ),
               const SizedBox(height: 8),
-              if (!_can && _tab != _Tab.templates)
+              if (!_can && _tab != _Tab.templates && _tab != _Tab.timeline)
                 const _Note('التخصيص (العناصر والخطوط والألوان) بالخطط المدفوعة. '
                     'بالمجاني: القوالب الجاهزة.'),
               switch (_tab) {
                 _Tab.elements => _elementsTab(),
                 _Tab.fonts => _fontsTab(),
                 _Tab.colors => _colorsTab(),
+                _Tab.timeline => _timelineTab(),
                 _Tab.templates => _templatesTab(),
               },
             ],
@@ -939,6 +1265,55 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                       style: const TextStyle(fontSize: 12))),
             ],
           ),
+      ],
+    );
+  }
+
+  // --------------------------- تبويب الخط الزمني ---------------------------
+
+  Widget _timelineTab() {
+    final dur = _duration > 0 ? _duration : (_master?.value.duration.inMilliseconds ?? 0) / 1000;
+    final needsReviewCount = _segments.where((s) => s.needsReview || s.inferred).length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+                child: _Note('اضغط على مقطع لتفاصيله (تغيير الآية، حذف، توقيت '
+                    'دقيق)، أو اسحب حدوده مباشرة. المقاطع البرتقالية بدها مراجعة.')),
+            IconButton(
+              tooltip: 'إضافة مقطع',
+              icon: const Icon(Icons.add_circle, color: _gold),
+              onPressed: _addSegmentFlow,
+            ),
+          ],
+        ),
+        if (needsReviewCount > 0)
+          _Note('في $needsReviewCount مقطع بده مراجعة.'),
+        if (_peaks == null)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Row(children: [
+              SizedBox(
+                  width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(width: 8),
+              Text('عم نحمّل موجة الصوت...', style: TextStyle(fontSize: 11, color: Colors.white60)),
+            ]),
+          ),
+        ValueListenableBuilder<double>(
+          valueListenable: _time,
+          builder: (_, t, __) => SegmentTimelineView(
+            segments: [for (var i = 0; i < _segments.length; i++) TimelineSegment(i, _segments[i])],
+            duration: dur > 0 ? dur : 1,
+            peaks: _peaks ?? WaveformPeaks.empty,
+            playhead: t,
+            selectedIndex: _selectedSegment,
+            onSeek: (s) => _seek(Duration(milliseconds: (s * 1000).round())),
+            onTapSegment: _openSegmentDetail,
+            onDragHandle: _onDragHandle,
+          ),
+        ),
       ],
     );
   }
