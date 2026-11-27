@@ -103,4 +103,59 @@ void main() {
       expect(r, isNull);
     });
   });
+
+  group('snapSeconds (التصاق الحد بالجار)', () {
+    test('قريب = بيلتصق وبيرجّع رقم الهدف، بعيد = نفس القيمة', () {
+      expect(snapSeconds(4.03, [4.0, 9.0], threshold: 0.1), (4.0, 0));
+      expect(snapSeconds(8.95, [4.0, 9.0], threshold: 0.1), (9.0, 1));
+      expect(snapSeconds(6.0, [4.0, 9.0], threshold: 0.1), (6.0, null));
+      expect(snapSeconds(6.0, const [], threshold: 0.1), (6.0, null));
+    });
+  });
+
+  group('حقول البداية/النهاية: parseSecondsInput / formatSecondsInput', () {
+    test('أرقام عادية وعربية-هندية وفارسية، وفاصلة عشرية عربية أو فاصلة', () {
+      expect(parseSecondsInput('12.5'), 12.5);
+      expect(parseSecondsInput(' ١٢٫٥ '), 12.5);
+      expect(parseSecondsInput('۳٫۲۵'), 3.25);
+      expect(parseSecondsInput('3,25'), 3.25);
+      expect(parseSecondsInput('7'), 7.0);
+    });
+
+    test('دقائق:ثواني', () {
+      expect(parseSecondsInput('1:05.5'), 65.5);
+      expect(parseSecondsInput('٢:٠٠'), 120.0);
+      expect(parseSecondsInput('1:75'), isNull);
+    });
+
+    test('غلط = null (الحقل بيرجع لقيمته)', () {
+      for (final bad in ['', '  ', 'abc', '-1', '1:2:3', '1.2.3']) {
+        expect(parseSecondsInput(bad), isNull, reason: bad);
+      }
+    });
+
+    test('العرض بخانتين (أدق من 0.1) والرجوع لنفس القيمة', () {
+      expect(formatSecondsInput(3.0), '3.00');
+      expect(formatSecondsInput(12.346), '12.35');
+      for (final v in [0.0, 0.1, 2.3, 59.99, 125.4]) {
+        expect(parseSecondsInput(formatSecondsInput(v)), closeTo(v, 0.005));
+      }
+    });
+
+    test('formatClock للمسطرة', () {
+      expect(formatClock(7.4), '0:07.4');
+      expect(formatClock(65.4), '1:05.4');
+      expect(formatClock(-3), '0:00.0');
+    });
+  });
+
+  group('تحويل ثانية ↔ موضع مع التكبير', () {
+    test('نفس الثانية بتطلع بنفس النسبة من عرض الخط بكل مستويات التكبير', () {
+      for (final pps in [10.0, 60.0, 400.0]) {
+        final g = TimelineGeometry(durationSeconds: 30, pixelsPerSecond: pps);
+        expect(g.xOfSeconds(12) / g.totalWidth, closeTo(0.4, 1e-9));
+        expect(g.secondsOfX(g.xOfSeconds(12.34)), closeTo(12.34, 1e-9));
+      }
+    });
+  });
 }

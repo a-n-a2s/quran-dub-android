@@ -13,9 +13,11 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:quran_dub/editor/segment_edits.dart';
 import 'package:quran_dub/export/export_plan.dart';
 import 'package:quran_dub/export/export_request.dart';
 import 'package:quran_dub/export/export_status.dart';
@@ -25,7 +27,9 @@ import 'package:quran_dub/overlay/overlay_frame.dart';
 import 'package:quran_dub/overlay/overlay_layout.dart';
 import 'package:quran_dub/overlay/overlay_style.dart';
 import 'package:quran_dub/pipeline/project_input.dart';
+import 'package:quran_dub/pipeline/quran_text_source.dart';
 import 'package:quran_dub/pipeline/recitation_segment.dart';
+import 'package:quran_dub/pipeline/segment_factory.dart';
 import 'package:quran_dub/platform/video_info.dart';
 import 'package:quran_dub/screens/export_screen.dart';
 
@@ -148,11 +152,28 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
     var input = ProjectInput(
         videoPath: videoPath, source: VideoSource.gallery, videoInfo: info);
     if (c['audio'] != null) input = input.withExternalAudio('$inDir/${c['audio']}');
-    final style = _styleFor(c);
+    var style = _styleFor(c);
     final whiteText = style.color == OverlayTextColor.white;
-    final List<RecitationSegment> segments = c['long'] == true
+    List<RecitationSegment> segments = c['long'] == true
         ? [longSegment(start: 0.5, end: 5.5)]
         : referenceSegments(offset: 0.3);
+    if (c['edited'] == true) {
+      // يوم 10: نفس عمليات المحرر (segment_edits.dart) على مقاطع التحليل:
+      // تغيير آية، تحريك حدود، إضافة مقطع بنص المستخدم، وحجم خاص بمقطع
+      // بيلحقه بعد الإضافة. التصدير لازم يطلّع النتيجة المعدّلة بالضبط.
+      final edited = await _manualEdits(segments, style.segmentScales);
+      segments = edited.$1;
+      style = style.copyWith(segmentScales: edited.$2);
+      result['edited'] = [for (final s in segments) s.describe()];
+      if (segments.length != 4 ||
+          segments[2].ref != '50:29' ||
+          (segments[2].start - 4.2).abs() > 1e-6 ||
+          (segments[2].end - 5.4).abs() > 1e-6 ||
+          segments[3].userText != _userText ||
+          !segments[3].isVisible) {
+        problems.add('التعديلات اليدوية ما انطبقت زي المتوقع: ${result['edited']}');
+      }
+    }
     final req = ExportRequest(
         input: input,
         segments: segments,
@@ -391,6 +412,26 @@ Future<Map<String, Object?>> _runCase(WidgetTester tester, Map<String, dynamic> 
 
 
 const Map<int, String> _surahNames = {50: 'سُوْرَةُ ق', 2: 'سُوْرَةُ البَقَرَة'};
+
+const String _userText = 'اللهم تقبّل منا';
+
+/// تعديلات يدوية زي ما المستخدم بيعملها بالخط الزمني (يوم 10).
+Future<(List<RecitationSegment>, Map<int, Map<OverlayElement, double>>)> _manualEdits(
+    List<RecitationSegment> segs, Map<int, Map<OverlayElement, double>> scales) async {
+  final bytes = await rootBundle.load('assets/quran/quran_data.json.gz');
+  final text = QuranTextSource.fromSeedBundle(bytes.buffer.asUint8List());
+  var s = segs;
+  var sc = {...scales, 2: {OverlayElement.ayah: 1.15}};
+  void run(SegmentEdit e) {
+    s = e.segments;
+    sc = e.remapScales(sc);
+  }
+
+  run(changeAyah(text, s, 2, 50, 29)); // 50:28 → 50:29 (آية غلط اتصلّحت)
+  run(setBounds(s, 2, 4.2, 5.4, duration: 7)); // التوقيت انزاح ثانية
+  run(insertSegment(s, buildUserTextSegment(start: 5.6, end: 6.8, userText: _userText))!);
+  return (s, sc);
+}
 
 /// شكل الحالة من cases.json: لون، شدة ظل (`shadowStrength` 0..1، أو `shadow:true`
 /// القديم = 0.7)، خلفية (`bg`: {mode, opacity})، وعناصر (`surahRef`، `reciter`،

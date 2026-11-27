@@ -567,6 +567,64 @@ void _inferMissingAyahs(
   }
 }
 
+/// تلاوة وحدة لآية [surah]:[ayah] مقسومة على أوقات [partTimes] (جزء لكل
+/// نطاق، بالترتيب) — للمحرر (يوم 10: تغيير الآية، إضافة مقطع يدوي، وإعادة
+/// بناء أجزاء آية بعد حذف جزء منها). **نفس [_buildGroup] تبع خط الأنابيب
+/// بالضبط** (قص النص على حدود الكلمات، رقم الآية مع آخر جزء، تقسيم التفسير
+/// بـ [TafsirSplitter] وحد [PipelineOptions.minTafsirCharsPerPart])، فما في
+/// نسخة ثانية من المنطق. الفرق الوحيد: ما في توقيت حروف من التعرف، فحدود
+/// الأجزاء بمفتاح الآية بتتوزّع **بنسبة مدة كل جزء**.
+///
+/// آية مش موجودة بالمصدر → مقاطع "مش قرآن" فاضية "بدها مراجعة" (باقتراح
+/// الرقم اللي انطلب) بنفس الأوقات، بدل استثناء.
+List<RecitationSegment> buildAyahReading(
+  QuranTextSource text,
+  int surah,
+  int ayah,
+  List<(double, double)> partTimes, {
+  PipelineOptions options = const PipelineOptions(),
+  double confidence = 1.0,
+  bool needsReview = false,
+  String asrText = '',
+  bool inferred = false,
+}) {
+  if (partTimes.isEmpty) return const [];
+  final times = [
+    for (final (s, e) in partTimes) (s, e < s ? s : e),
+  ];
+  final content = text.ayah(surah, ayah);
+  if (content == null) {
+    return [
+      for (final (s, e) in times)
+        RecitationSegment(
+          start: s,
+          end: e,
+          kind: SegmentKind.nonQuran,
+          confidence: confidence,
+          needsReview: true,
+          suggestedRef: '$surah:$ayah',
+          asrText: asrText,
+        ),
+    ];
+  }
+  final len = AyahTextCutter(content.uthmani).keyLength;
+  final durations = [for (final (s, e) in times) e - s];
+  final total = durations.fold<double>(0, (a, b) => a + b);
+  final items = <_AyahItem>[];
+  var acc = 0.0;
+  var prevKe = 0;
+  for (var k = 0; k < times.length; k++) {
+    acc += total > 0 ? durations[k] : 1;
+    final frac = acc / (total > 0 ? total : times.length);
+    final ke = k == times.length - 1 ? len : (len * frac).round().clamp(prevKe, len);
+    items.add(_AyahItem(surah, ayah, prevKe, ke, times[k].$1, times[k].$2,
+        confidence, needsReview, asrText,
+        inferred: inferred));
+    prevKe = ke;
+  }
+  return _buildGroup(text, items, options);
+}
+
 /// الآيات اللي انكتبت (بالترتيب، بدون تكرار).
 List<String> pipelineAyahRefs(List<RecitationSegment> segs) {
   final seen = <String>{};

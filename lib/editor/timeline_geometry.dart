@@ -101,3 +101,68 @@ bool rangeOverlapsExisting(
   if (t + length <= duration) return (t, t + length);
   return null;
 }
+
+/// التصاق حد مقطع وقت السحب (نفس فكرة خطوط الإرشاد بسحب العناصر، يوم 9):
+/// لو [value] قريبة من وحدة من [candidates] (حد الجار، أو موقع التشغيل) أقل
+/// من [threshold] ثانية، بترجع القيمة الملتصقة (والـ index تبعها عشان الواجهة
+/// تعمل هزّة خفيفة مرة وحدة)، وإلا نفسها و null.
+(double, int?) snapSeconds(double value, List<double> candidates,
+    {required double threshold}) {
+  var best = value;
+  int? which;
+  var bestD = threshold;
+  for (var i = 0; i < candidates.length; i++) {
+    final d = (candidates[i] - value).abs();
+    if (d <= bestD) {
+      bestD = d;
+      best = candidates[i];
+      which = i;
+    }
+  }
+  return (best, which);
+}
+
+/// قراءة ثواني من حقل كتابة: بيقبل الأرقام العربية-الهندية (٠–٩) والفارسية،
+/// الفاصلة العشرية العربية (٫) أو الفاصلة (,) أو النقطة، وكمان دقائق:ثواني
+/// (`1:05.3`). نص فاضي أو غلط → null (الحقل بيرجع لقيمته).
+double? parseSecondsInput(String raw) {
+  var s = raw.trim();
+  if (s.isEmpty) return null;
+  final b = StringBuffer();
+  for (final u in s.runes) {
+    if (u >= 0x0660 && u <= 0x0669) {
+      b.writeCharCode(0x30 + u - 0x0660);
+    } else if (u >= 0x06F0 && u <= 0x06F9) {
+      b.writeCharCode(0x30 + u - 0x06F0);
+    } else if (u == 0x066B || u == 0x2C) {
+      b.write('.');
+    } else if (u == 0x066C || u == 0x20) {
+      // فاصل آلاف أو مسافة: بنتجاهلهم.
+    } else {
+      b.writeCharCode(u);
+    }
+  }
+  s = b.toString();
+  final parts = s.split(':');
+  if (parts.length > 2) return null;
+  if (parts.length == 2) {
+    final m = int.tryParse(parts[0]);
+    final sec = double.tryParse(parts[1]);
+    if (m == null || sec == null || m < 0 || sec < 0 || sec >= 60) return null;
+    return m * 60 + sec;
+  }
+  final v = double.tryParse(s);
+  if (v == null || v.isNaN || v.isInfinite || v < 0) return null;
+  return v;
+}
+
+/// عرض ثواني بحقل البداية/النهاية: خانتين عشريتين (أدق من 0.1 المطلوبة).
+String formatSecondsInput(double v) => v.toStringAsFixed(2);
+
+/// عرض مختصر للخط الزمني: `0:07.4` أو `12:03.0`.
+String formatClock(double seconds) {
+  final s = seconds < 0 ? 0.0 : seconds;
+  final m = s ~/ 60;
+  final rest = s - m * 60;
+  return '$m:${rest.toStringAsFixed(1).padLeft(4, '0')}';
+}

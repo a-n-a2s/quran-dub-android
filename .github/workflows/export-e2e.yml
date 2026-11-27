@@ -10,6 +10,8 @@ on:
     paths:
       - "lib/export/**"
       - "lib/overlay/**"
+      - "lib/editor/**"
+      - "lib/pipeline/**"
       - "lib/screens/export_screen.dart"
       - "lib/platform/**"
       - "android/**"

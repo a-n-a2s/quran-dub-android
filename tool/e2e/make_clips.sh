@@ -52,7 +52,8 @@ cat > cases.json <<'J'
   {"name": "shadow30_white_mid", "file": "portrait_mid.mp4", "color": "white", "shadowStrength": 0.3, "expectShadow": true},
   {"name": "moved_big_bg_names", "file": "landscape_mid.mp4", "color": "white", "shadowStrength": 1.0, "expectShadow": true, "bg": {"mode": "box", "opacity": 0.45}, "surahRef": true, "reciter": "الشيخ محمد", "moveAyah": [0.5, 0.15], "ayahScale": 1.3, "moveTafsir": [0.5, 0.7], "skipFirstRow": true},
   {"name": "per_segment_sizes", "file": "portrait_mid.mp4", "color": "white", "shadowStrength": 1.0, "expectShadow": true, "segmentScales": {"1": {"ayah": 1.5, "tafsir": 0.7}}, "skipFirstRow": true},
-  {"name": "external_audio_amiri_full", "file": "portrait_dark.mp4", "audio": "recite.m4a", "color": "white", "font": "amiriQuran", "tafsir": "fullUnderEachPart"}
+  {"name": "external_audio_amiri_full", "file": "portrait_dark.mp4", "audio": "recite.m4a", "color": "white", "font": "amiriQuran", "tafsir": "fullUnderEachPart"},
+  {"name": "edited_manual_usertext", "file": "portrait_dark.mp4", "color": "white", "edited": true, "skipFirstRow": true}
 ]
 J
 for f in *.mp4; do

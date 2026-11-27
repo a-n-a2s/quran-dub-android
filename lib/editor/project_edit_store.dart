@@ -5,7 +5,15 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../overlay/overlay_layout.dart';
 import '../pipeline/recitation_segment.dart';
+
+/// تعديلات مشروع محفوظة: المقاطع وأحجام كل مقطع.
+class ProjectEdits {
+  final List<RecitationSegment> segments;
+  final Map<int, Map<OverlayElement, double>> segmentScales;
+  const ProjectEdits(this.segments, this.segmentScales);
+}
 
 /// تعديلات مشروع واحد: قائمة المقاطع بعد كل التصحيحات اليدوية (تغيير آية،
 /// حذف، إضافة، تعديل توقيت، نص مستخدم). القوالب والشكل العام ([OverlayStyle]
@@ -14,34 +22,62 @@ class ProjectEditStore {
   final File file;
   const ProjectEditStore(this.file);
 
-  static const int _version = 1;
+  static const int _version = 2;
 
   /// null = ما في تعديلات محفوظة (أول فتح، أو ملف تالف/مفقود) — المتصل
   /// بيبلّش من مقاطع التحليل الأصلية.
-  Future<List<RecitationSegment>?> load() async {
+  Future<List<RecitationSegment>?> load() async => (await loadEdits())?.segments;
+
+  /// المقاطع + أحجام كل مقطع (`segmentScales`، مفاتيحها index بنفس القائمة
+  /// المحفوظة). [base]: بصمة التحليل اللي المتصل فاتحه (`segmentsSignature`):
+  /// لو الملف انحفظ فوق تحليل ثاني (المستخدم عاد التحليل) → null، عشان ما
+  /// نركّب تعديلات قديمة على نتيجة جديدة.
+  Future<ProjectEdits?> loadEdits({String? base}) async {
     try {
       if (!await file.exists()) return null;
       final j = jsonDecode(await file.readAsString());
       if (j is! Map || j['segments'] is! List) return null;
+      if (base != null && j['base'] is String && j['base'] != base) return null;
       final out = <RecitationSegment>[];
       for (final s in j['segments'] as List) {
         final seg = RecitationSegment.fromJson(s);
         if (seg == null) return null; // عنصر تالف: ما نثق بباقي الملف.
         out.add(seg);
       }
-      return out;
+      final scales = <int, Map<OverlayElement, double>>{};
+      final raw = j['segmentScales'];
+      if (raw is Map) {
+        raw.forEach((k, v) {
+          final idx = int.tryParse('$k');
+          if (idx == null || idx < 0 || idx >= out.length || v is! Map) return;
+          final m = <OverlayElement, double>{
+            for (final e in OverlayElement.values)
+              if (v[e.name] is num) e: clampScale((v[e.name] as num).toDouble()),
+          };
+          if (m.isNotEmpty) scales[idx] = m;
+        });
+      }
+      return ProjectEdits(out, scales);
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> save(List<RecitationSegment> segments) async {
+  Future<void> save(List<RecitationSegment> segments,
+      {String? base, Map<int, Map<OverlayElement, double>> segmentScales = const {}}) async {
     final tmp = File('${file.path}.tmp');
     await file.parent.create(recursive: true);
     await tmp.writeAsString(
       jsonEncode({
         'version': _version,
+        if (base != null) 'base': base,
         'segments': [for (final s in segments) s.toJson()],
+        'segmentScales': {
+          for (final k in segmentScales.keys)
+            '$k': {
+              for (final e in segmentScales[k]!.keys) e.name: segmentScales[k]![e]
+            }
+        },
       }),
       flush: true,
     );

@@ -205,6 +205,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 builder: (_) => OverlayEditorScreen(
                   input: _input,
                   segments: r.segments,
+                  wavPath: r.wavPath,
                 ),
               )),
               icon: const Icon(Icons.play_circle_outline),

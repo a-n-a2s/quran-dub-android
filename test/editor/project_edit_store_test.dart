@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quran_dub/editor/project_edit_store.dart';
+import 'package:quran_dub/overlay/overlay_layout.dart';
 import 'package:quran_dub/pipeline/recitation_segment.dart';
 import 'package:quran_dub/pipeline/segment_factory.dart';
 import 'package:quran_dub/pipeline/quran_text_source.dart';
@@ -80,5 +81,30 @@ void main() {
     final b = projectEditFileName('/a/b/other.mp4');
     expect(a, a2);
     expect(a, isNot(b));
+  });
+
+  test('بصمة التحليل: تحليل جديد (بصمة مختلفة) ما بيحمّل تعديلات قديمة', () async {
+    final store = ProjectEditStore(File('${dir.path}/edits.json'));
+    await store.save([buildUserTextSegment(start: 0, end: 1, userText: 'قديم')],
+        base: 'A');
+    expect((await store.loadEdits(base: 'A'))!.segments.single.userText, 'قديم');
+    expect(await store.loadEdits(base: 'B'), isNull);
+    // بدون بصمة (نسخة أقدم أو متصل ما بيهمّه) بيحمّل عادي.
+    expect(await store.loadEdits(), isNotNull);
+  });
+
+  test('أحجام كل مقطع بتنحفظ مع المقاطع، والمفتاح برا القائمة بينشال', () async {
+    final store = ProjectEditStore(File('${dir.path}/edits.json'));
+    await store.save([
+      buildUserTextSegment(start: 0, end: 1, userText: 'أ'),
+      buildUserTextSegment(start: 1, end: 2, userText: 'ب'),
+    ], segmentScales: const {
+      1: {OverlayElement.ayah: 1.3, OverlayElement.tafsir: 0.8},
+      7: {OverlayElement.ayah: 1.1},
+    });
+    final e = (await store.loadEdits())!;
+    expect(e.segmentScales, {
+      1: {OverlayElement.ayah: 1.3, OverlayElement.tafsir: 0.8},
+    });
   });
 }

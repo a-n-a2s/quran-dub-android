@@ -1,4 +1,5 @@
 // استخراج peaks موجة الصوت من WAV مصطنع (يوم 10).
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,7 +7,7 @@ import 'package:quran_dub/asr/wav_audio.dart';
 import 'package:quran_dub/editor/waveform.dart';
 
 /// WAV صافي PCM16 mono بسيط (16-bit، قناة وحدة) من عيّنات جاهزة.
-Uint8List _buildWav(List<int> samples, {int sampleRate = 8000}) {
+Uint8List _buildWav(List<int> samples, {int sampleRate = 8000, int channels = 1}) {
   final dataLen = samples.length * 2;
   final b = BytesBuilder();
   void u32(int v) => b.add(Uint32List.fromList([v]).buffer.asUint8List());
@@ -17,10 +18,10 @@ Uint8List _buildWav(List<int> samples, {int sampleRate = 8000}) {
   b.add('fmt '.codeUnits);
   u32(16);
   u16(1); // PCM
-  u16(1); // mono
+  u16(channels);
   u32(sampleRate);
-  u32(sampleRate * 2); // byte rate
-  u16(2); // block align
+  u32(sampleRate * 2 * channels); // byte rate
+  u16(2 * channels); // block align
   u16(16); // bits per sample
   b.add('data'.codeUnits);
   u32(dataLen);
@@ -91,6 +92,54 @@ void main() {
       final firstHalfMax = peaks.peaks.take(10).reduce((a, b) => a > b ? a : b);
       final secondHalfMax = peaks.peaks.skip(10).reduce((a, b) => a > b ? a : b);
       expect(firstHalfMax, greaterThan(secondHalfMax));
+    });
+  });
+
+  group('extractPeaksPcm16Streaming (الطريق السريع بالقطع، بدون تحميل الملف كامل)', () {
+    late Directory dir;
+    setUp(() => dir = Directory.systemTemp.createTempSync('ayah_wave'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    test('نفس نتيجة الفك الكامل (mono)، وطول الملف صح', () {
+      const sr = 8000;
+      final samples = [
+        for (var i = 0; i < sr * 3; i++) ((i % 40 < 20 ? 1 : -1) * (i < sr ? 3000 : 20000)),
+      ];
+      final f = File('${dir.path}/m.wav')..writeAsBytesSync(_buildWav(samples, sampleRate: sr));
+      final fast = extractPeaksPcm16Streaming(f.path, bucketsPerSecond: 10)!;
+      final full = extractPeaks(WavAudio.decode(f.readAsBytesSync()), bucketsPerSecond: 10);
+      expect(fast.peaks.length, full.peaks.length);
+      for (var i = 0; i < fast.peaks.length; i++) {
+        expect(fast.peaks[i], closeTo(full.peaks[i], 1e-4));
+      }
+      expect(fast.durationSeconds, closeTo(3, 1e-9));
+      expect(fast.at(0.5), lessThan(fast.at(2.0)));
+    });
+
+    test('ستيريو: متوسط القنوات (زي WavAudio.decode)', () {
+      const sr = 4000;
+      // قناة يسار 10000 ويمين 0 → المتوسط 5000.
+      final inter = <int>[for (var i = 0; i < sr; i++) ...[10000, 0]];
+      final f = File('${dir.path}/s.wav')
+        ..writeAsBytesSync(_buildWav(inter, sampleRate: sr, channels: 2));
+      final fast = extractPeaksPcm16Streaming(f.path, bucketsPerSecond: 4)!;
+      expect(fast.peaks, hasLength(4));
+      for (final p in fast.peaks) {
+        expect(p, closeTo(5000 / 32768, 1e-4));
+      }
+    });
+
+    test('مش WAV أو مش 16-bit = null (بيرجع للطريق الكامل)', () {
+      final f = File('${dir.path}/x.wav')..writeAsBytesSync([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+      expect(extractPeaksPcm16Streaming(f.path), isNull);
+    });
+
+    test('extractPeaksFromWavFile بـ isolate', () async {
+      final f = File('${dir.path}/i.wav')
+        ..writeAsBytesSync(_buildWav(List.filled(16000, 8000), sampleRate: 8000));
+      final p = await extractPeaksFromWavFile(f.path, bucketsPerSecond: 20);
+      expect(p.peaks, hasLength(40));
+      expect(p.peaks.first, closeTo(8000 / 32768, 1e-4));
     });
   });
 }
