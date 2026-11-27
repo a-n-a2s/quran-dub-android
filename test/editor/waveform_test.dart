@@ -34,7 +34,7 @@ Uint8List _buildWav(List<int> samples, {int sampleRate = 8000, int channels = 1}
 void main() {
   group('extractPeaks (MonoAudio)', () {
     test('فاضي أو sampleRate صفري → فاضي بدون انهيار', () {
-      expect(extractPeaks(const MonoAudio(Float32List.empty(), 16000)).peaks,
+      expect(extractPeaks(const MonoAudio(Float32List(0), 16000)).peaks,
           isEmpty);
       expect(
           extractPeaks(MonoAudio(Float32List.fromList([0.1, 0.2]), 0)).peaks,
