@@ -192,9 +192,11 @@ void main() {
       expect(a.segments.single.userText, 'اللهم تقبّل');
       expect(a.segments.single.isVisible, isTrue);
       expect(a.segments.single.needsReview, isFalse);
+      expect(a.segments.single.kindLabel, 'نص المستخدم');
       final b = setUserText(a.segments, 0, '   ');
       expect(b.segments.single.userText, isNull);
       expect(b.segments.single.isVisible, isFalse);
+      expect(b.segments.single.kindLabel, 'مش قرآن (فاضي)');
     });
 
     test('convertToNonQuran: الآية بتصير مقطع لنص المستخدم بنفس الوقت، وجيرانها من نفس الآية بينبنوا من جديد', () {

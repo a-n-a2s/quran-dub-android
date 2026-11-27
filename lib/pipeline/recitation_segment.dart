@@ -164,7 +164,9 @@ class RecitationSegment {
         SegmentKind.partialAyah => 'جزء $part/$partCount',
         SegmentKind.basmala => 'بسملة',
         SegmentKind.istiadha => 'استعاذة (مخفية)',
-        SegmentKind.nonQuran => 'مش قرآن (فاضي)',
+        SegmentKind.nonQuran => (userText ?? '').trim().isEmpty
+            ? 'مش قرآن (فاضي)'
+            : 'نص المستخدم',
       };
 
   /// سطر ملخص: [0.10–5.51s] 1:1 آية ثقة 90%
