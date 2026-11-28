@@ -134,7 +134,7 @@ void main() {
       final base = [nq(0, 1), ...buildAyahReading(text, 2, 255, [(1.0, 20.0)]), nq(20, 21)];
       final e = splitAyahAtWords(text, base, 1, [4]);
       final m = e.remapMap({1: 'خاص', 2: 'بعدها'});
-      expect(m, {1: 'خاص', 4: 'بعدها'});
+      expect(m, {1: 'خاص', 3: 'بعدها'}); // جزئين: اللي بعدها بيتأخر وحدة
     });
 
     test('مخزن التعديلات بيحفظ ويرجّع الشكل الخاص', () async {
