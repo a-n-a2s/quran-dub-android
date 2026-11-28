@@ -326,6 +326,26 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
+                    // الواجهة الجديدة: صور مصغّرة لمسار الفيديو بالخط الزمني (JPEG).
+                    "thumbnails" -> {
+                        val path = call.argument<String>("path")
+                        val durationMs = (call.argument<Number>("durationMs") ?: 0).toLong()
+                        val count = call.argument<Int>("count") ?: 0
+                        val h = call.argument<Int>("height") ?: 0
+                        val portrait = call.argument<Boolean>("portrait")
+                        if (path == null || count <= 0 || h <= 0) {
+                            result.error("ARGS", "path/count/height مطلوبين", null)
+                            return@setMethodCallHandler
+                        }
+                        audioExecutor.execute {
+                            try {
+                                val list = FrameGrabber.thumbnails(path, durationMs, count, h, portrait)
+                                runOnUiThread { result.success(list) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("THUMBS", e.message ?: e.toString(), null) }
+                            }
+                        }
+                    }
                     // يوم 7: سطوع منطقة النص (لاختيار نص أبيض أو أسود تلقائياً).
                     "textBandBrightness" -> {
                         val path = call.argument<String>("path")

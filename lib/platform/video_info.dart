@@ -38,6 +38,20 @@ class VideoInfoReader {
     return r;
   }
 
+  /// صور مصغّرة (JPEG) لمسار الفيديو بالخط الزمني: [count] إطار موزّعين على
+  /// المدة، بارتفاع [height] بكسل. الإطار اللي ما انقرأ = مصفوفة فاضية.
+  static Future<List<Uint8List>> thumbnails(String path,
+      {required int durationMs, required int count, required int height, bool? portrait}) async {
+    final r = await _channel.invokeListMethod<Object?>('thumbnails', {
+      'path': path,
+      'durationMs': durationMs,
+      'count': count,
+      'height': height,
+      'portrait': portrait,
+    });
+    return [for (final e in r ?? const <Object?>[]) e is Uint8List ? e : Uint8List(0)];
+  }
+
   /// سطوع الفيديو بمنطقة النص (يوم 7، `FrameBrightness.kt`): (متوسط السطوع
   /// 0..1، نسبة البكسلات الفاتحة). null لو ما قدرنا نقرأ إطارات.
   static Future<({double luma, double brightFraction})?> textBandBrightness(

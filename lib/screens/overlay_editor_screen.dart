@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -32,41 +34,44 @@ import '../platform/video_info.dart';
 import 'export_screen.dart';
 import 'widgets/ayah_picker_dialog.dart';
 import 'widgets/segment_detail_panel.dart';
-import 'widgets/segment_timeline_view.dart';
+import 'widgets/editor_timeline.dart';
+import '../ui/app_theme.dart';
+import '../ui/ayah_widgets.dart';
 
-// هوية التطبيق (أخضر غامق + ذهبي): بشكل مبسّط لحد يوم 22 (تلميع الواجهات).
-const Color _green = Color(0xFF0E2F24);
-const Color _greenLight = Color(0xFF17432F);
-const Color _gold = Color(0xFFD9B55E);
+// المحرر بالتصميم الجديد (طلب أنس 2026-11-28): زي CapCut — المعاينة فوق، تحتها
+// سطر التشغيل (الوقت، تشغيل، تراجع/إعادة)، الخط الزمني بسهم ثابت بالنص، وشريط
+// أدوات سفلي بيتغيّر حسب المحدد (آية محددة = أدوات الآية). الأدوات بتفتح لوحة
+// مكان الخط الزمني (زي CapCut) وزر ✓ بيسكّرها. دايماً غامق.
+const Color _gold = AyahColors.gold;
+const Color _editorBg = Color(0xFF020E0A);
+const Color _panelBg = Color(0xFF071A13);
 
 ThemeData _editorTheme() {
-  final base = ThemeData.dark(useMaterial3: true);
+  final base = buildAyahTheme(dark: true);
   return base.copyWith(
-    scaffoldBackgroundColor: _green,
-    colorScheme: base.colorScheme.copyWith(
-      primary: _gold,
-      onPrimary: Colors.black,
-      secondary: _gold,
-      surface: _greenLight,
-      secondaryContainer: const Color(0xFF2B5A43),
-      onSecondaryContainer: Colors.white,
-    ),
-    appBarTheme: const AppBarTheme(
-        backgroundColor: _green, foregroundColor: Colors.white, elevation: 0),
-    sliderTheme: base.sliderTheme.copyWith(
-        activeTrackColor: _gold, thumbColor: _gold, inactiveTrackColor: Colors.white24),
+    scaffoldBackgroundColor: _editorBg,
+    appBarTheme: base.appBarTheme.copyWith(backgroundColor: _editorBg),
   );
 }
 
-enum _Tab {
-  elements('عناصر'),
-  fonts('خطوط'),
-  colors('ألوان'),
-  timeline('الخط الزمني'),
-  templates('قوالب');
+/// أدوات المحرر (كل وحدة بتفتح لوحة مكان الخط الزمني).
+enum _Tool {
+  elements('العناصر', Icons.layers_rounded),
+  fonts('الخطوط والأحجام', Icons.text_fields_rounded),
+  colors('الألوان والظل', Icons.palette_rounded),
+  templates('القوالب', Icons.auto_awesome_mosaic_rounded),
+  details('تفاصيل الآية', Icons.tune_rounded);
 
   final String label;
-  const _Tab(this.label);
+  final IconData icon;
+  const _Tool(this.label, this.icon);
+}
+
+/// لقطة للتراجع/الإعادة: المقاطع + الشكل.
+class _Snapshot {
+  final List<RecitationSegment> segments;
+  final OverlayStyle style;
+  const _Snapshot(this.segments, this.style);
 }
 
 /// المحرر 1 (يوم 9، مش التصميم النهائي يوم 22): معاينة الفيديو مع النص
@@ -112,6 +117,29 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   final ValueNotifier<double> _time = ValueNotifier<double>(0);
   late final Ticker _ticker;
 
+  /// النص الظاهر هلأ (بيتغيّر بس لما المقطع أو الشفافية تتغيّر، مش كل إطار).
+  final ValueNotifier<OverlayCue?> _cue = ValueNotifier<OverlayCue?>(null);
+  final ValueNotifier<bool> _playing = ValueNotifier<bool>(false);
+
+  /// المستخدم عم يسحب الخط الزمني: الساعة ما بتكتب فوق موقعه.
+  bool _scrubbing = false;
+  bool _wasPlayingBeforeScrub = false;
+
+  /// seek واحد بس شغّال بنفس الوقت، والأحدث بيستنى (بدل طابور seeks بيعلّق).
+  bool _seekBusy = false;
+  double? _seekPending;
+
+  /// موقع التشغيل قبل سحب مقبض (بنرجعله بعد السحب).
+  double? _timeBeforeHandle;
+
+  final List<_Snapshot> _undo = [];
+  final List<_Snapshot> _redo = [];
+  DateTime _lastStyleEdit = DateTime.fromMillisecondsSinceEpoch(0);
+
+  List<ui.Image?> _thumbs = const [];
+  _Tool? _tool;
+  final GlobalKey<EditorTimelineState> _timelineKey = GlobalKey<EditorTimelineState>();
+
   late OverlayTimeline _timeline;
   late OverlayStyle _style;
 
@@ -144,7 +172,6 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   String? _error;
   bool _ready = false;
 
-  _Tab _tab = _Tab.elements;
   OverlayElement? _selected;
 
   // سحب العناصر: أبعاد الفيديو بالبكسل، ومفاتيح لقياس مكان كل عنصر.
@@ -186,9 +213,8 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     _segments = [...widget.segments];
     _rebuildTimeline();
     _ticker = createTicker((_) {
-      _time.value = _clock.now(_wallSeconds);
-      final cur = _timeline.cueAt(_time.value)?.item.index;
-      if (cur != _segIdx.value) _segIdx.value = cur;
+      if (!_scrubbing) _time.value = _clock.now(_wallSeconds);
+      _updateCue();
     })..start();
     _init();
     _autoPickColor();
@@ -196,6 +222,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     _openTemplates();
     _openEditStore();
     _loadWaveform();
+    _loadThumbs();
     RecitationPipeline.instance.textSource.then((t) {
       if (mounted) _textSource = t;
     }).catchError((_) {});
@@ -206,6 +233,21 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     final info = widget.input.videoInfo;
     _timeline = OverlayTimeline.build(_segments,
         videoDuration: info.durationMs > 0 ? info.durationSeconds : null);
+    _cueKey = null; // نجبر تحديث النص الظاهر.
+  }
+
+  String? _cueKey;
+
+  /// تحديث [_cue] بس لما يتغيّر فعلاً (سرعة: النص العربي تقيل بالرسم).
+  void _updateCue() {
+    final c = _timeline.cueAt(_time.value);
+    final key = c == null ? '' : '${c.item.index}|${(c.opacity * 64).round()}';
+    if (key != _cueKey) {
+      _cueKey = key;
+      _cue.value = c;
+    }
+    final cur = c?.item.index;
+    if (cur != _segIdx.value) _segIdx.value = cur;
   }
 
   /// فتح مخزن تعديلات هالمشروع، وتحميل آخر نسخة محفوظة منه لو موجودة
@@ -341,7 +383,8 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     if (v.isCompleted && _video!.value.isPlaying) {
       _video!.pause();
     }
-    if (mounted) setState(() {}); // أيقونة التشغيل/الشريط
+    // بس أيقونة التشغيل (بدل setState للشاشة كلها مع كل تبليغ من المشغّل).
+    _playing.value = v.isPlaying;
   }
 
   Future<void> _togglePlay() async {
@@ -358,15 +401,129 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     }
   }
 
-  Future<void> _seek(Duration to) async {
-    final all = [_video!, if (_audio != null) _audio!];
-    await Future.wait([for (final c in all) c.seekTo(to)]);
-    _clock.report(
-      position: to.inMicroseconds / 1e6,
-      wall: _wallSeconds,
-      playing: _master!.value.isPlaying,
-    );
-    _time.value = to.inMicroseconds / 1e6;
+  Future<void> _seek(Duration to) => _seekTo(to.inMicroseconds / 1e6);
+
+  /// seek مضبوط: النص والخط الزمني بيتحدّثوا فوراً، والمشغّل بياخد آخر موقع
+  /// مطلوب بس (seek واحد بالمرة)، فالسحب السريع ما بيعمل طابور بيعلّق.
+  Future<void> _seekTo(double seconds) async {
+    final t = seconds.clamp(0.0, _duration).toDouble();
+    _time.value = t;
+    _updateCue();
+    if (_video == null) return;
+    if (_seekBusy) {
+      _seekPending = t;
+      return;
+    }
+    _seekBusy = true;
+    var target = t;
+    try {
+      while (true) {
+        final d = Duration(microseconds: (target * 1e6).round());
+        final all = [_video!, if (_audio != null) _audio!];
+        await Future.wait([for (final c in all) c.seekTo(d)]);
+        final next = _seekPending;
+        _seekPending = null;
+        if (next == null || (next - target).abs() < 0.001) break;
+        target = next;
+      }
+    } catch (_) {
+      // المشغّل انسكّر.
+    } finally {
+      _seekBusy = false;
+    }
+    if (!mounted || _master == null) return;
+    _clock.report(position: target, wall: _wallSeconds, playing: _master!.value.isPlaying);
+  }
+
+  // ------------------------ السحب على الخط الزمني ------------------------
+
+  void _onScrubStart() {
+    _scrubbing = true;
+    _wasPlayingBeforeScrub = _master?.value.isPlaying ?? false;
+    if (_wasPlayingBeforeScrub) {
+      for (final c in [_video!, if (_audio != null) _audio!]) {
+        c.pause();
+      }
+    }
+  }
+
+  void _onScrub(double t) => _seekTo(t);
+
+  void _onScrubEnd() {
+    _scrubbing = false;
+    _clock.report(position: _time.value, wall: _wallSeconds, playing: false);
+  }
+
+  // --------------------------- تراجع / إعادة ---------------------------
+
+  _Snapshot get _snap => _Snapshot(List.of(_segments), _style);
+
+  void _checkpoint() {
+    _undo.add(_snap);
+    if (_undo.length > 60) _undo.removeAt(0);
+    _redo.clear();
+  }
+
+  void _restore(_Snapshot s) {
+    setState(() {
+      _segments = List.of(s.segments);
+      _style = s.style;
+      if (_selectedSegment != null && _selectedSegment! >= _segments.length) {
+        _selectedSegment = null;
+      }
+      _rebuildTimeline();
+    });
+    _updateCue();
+    _saveEdits();
+  }
+
+  void _doUndo() {
+    if (_undo.isEmpty) return;
+    HapticFeedback.selectionClick();
+    _redo.add(_snap);
+    _restore(_undo.removeLast());
+  }
+
+  void _doRedo() {
+    if (_redo.isEmpty) return;
+    HapticFeedback.selectionClick();
+    _undo.add(_snap);
+    _restore(_redo.removeLast());
+  }
+
+  /// الصور المصغّرة لمسار الفيديو (بالخلفية، بعد ما المحرر يفتح).
+  Future<void> _loadThumbs() async {
+    try {
+      final info = widget.input.videoInfo;
+      final dur = info.durationSeconds > 0 ? info.durationSeconds : _duration;
+      final count = dur.isFinite ? dur.round().clamp(4, 40) : 12;
+      final bytes = await VideoInfoReader.thumbnails(widget.input.videoPath,
+          durationMs: info.durationMs, count: count, height: 112,
+          portrait: info.rotatedHeight > info.rotatedWidth);
+      final out = <ui.Image?>[];
+      for (final b in bytes) {
+        if (b.isEmpty) {
+          out.add(null);
+          continue;
+        }
+        try {
+          final codec = await ui.instantiateImageCodec(b);
+          final f = await codec.getNextFrame();
+          out.add(f.image);
+        } catch (_) {
+          out.add(null);
+        }
+      }
+      if (mounted && out.any((e) => e != null)) {
+        setState(() => _thumbs = out);
+      } else {
+        for (final i in out) {
+          i?.dispose();
+        }
+      }
+    } catch (_) {
+      // بدون صور: شريط فيلم بسيط.
+    }
   }
 
   Future<void> _openExport() async {
@@ -398,6 +555,11 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     _video?.dispose();
     _audio?.dispose();
     _time.dispose();
+    _cue.dispose();
+    _playing.dispose();
+    for (final i in _thumbs) {
+      i?.dispose();
+    }
     _guides.dispose();
     _segIdx.dispose();
     _reciterCtl.dispose();
@@ -408,7 +570,13 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   // تعديل الشكل
   // ---------------------------------------------------------------------
 
-  void _setStyle(OverlayStyle s) => setState(() => _style = s);
+  void _setStyle(OverlayStyle s) {
+    // تغييرات متتالية (سلايدر، سحب) = خطوة تراجع وحدة.
+    final now = DateTime.now();
+    if (now.difference(_lastStyleEdit).inMilliseconds > 700) _checkpoint();
+    _lastStyleEdit = now;
+    setState(() => _style = s);
+  }
 
   void _setPlacement(OverlayElement e, ElementPlacement Function(ElementPlacement) f) =>
       _setStyle(_style.copyWith(layout: _style.layout.update(e, f)));
@@ -601,7 +769,9 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   Future<QuranTextSource> _text() async =>
       _textSource ??= await RecitationPipeline.instance.textSource;
 
-  void _applyEdit(SegmentEdit e, {bool select = true, bool saveNow = false}) {
+  void _applyEdit(SegmentEdit e,
+      {bool select = true, bool saveNow = false, bool continuous = false}) {
+    if (!continuous) _checkpoint();
     setState(() {
       _segments = e.segments;
       _style = _style.copyWith(segmentScales: e.remapScales(_style.segmentScales));
@@ -631,24 +801,34 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     }
   }
 
+  void _onHandleStart(int index, bool isStart) {
+    _checkpoint();
+    _timeBeforeHandle = _time.value;
+    if (_master?.value.isPlaying ?? false) {
+      for (final c in [_video!, if (_audio != null) _audio!]) {
+        c.pause();
+      }
+    }
+  }
+
   void _onDragHandle(int index, bool isStart, double v) {
     if (index < 0 || index >= _segments.length) return;
     final s = _segments[index];
     _applyEdit(
         setBounds(_segments, index, isStart ? v : s.start, isStart ? s.end : v,
             duration: _duration),
-        select: false);
-    // المعاينة بتلحق الحد اللي عم ينسحب (بتشوف أول/آخر الآية)، بحد أقصى
-    // مرة كل 120ms (الـ seek بالمشغّل مش ببلاش).
-    if (_dragSeek.isRunning && _dragSeek.elapsedMilliseconds < 120) return;
-    _dragSeek
-      ..reset()
-      ..start();
-    _seek(Duration(
-        milliseconds: ((isStart ? _segments[index].start + 0.03 : _segments[index].end - 0.05)
-                    .clamp(0.0, _duration) *
-                1000)
-            .round()));
+        select: false,
+        continuous: true);
+    // المعاينة بتوريك أول/آخر الآية وانت بتسحب (seek مضبوط، آخر طلب بس).
+    final seg = _segments[index];
+    _seekTo(isStart ? seg.start + 0.03 : seg.end - 0.05);
+  }
+
+  void _onHandleEnd() {
+    _saveEdits(now: true);
+    final back = _timeBeforeHandle;
+    _timeBeforeHandle = null;
+    if (back != null) _seekTo(back);
   }
 
   void _onBounds(int index, double start, double end) {
@@ -810,7 +990,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   }
 
   // ---------------------------------------------------------------------
-  // البناء
+  // البناء (تصميم زي CapCut)
   // ---------------------------------------------------------------------
 
   @override
@@ -819,24 +999,75 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
       data: _editorTheme(),
       child: Directionality(
         textDirection: TextDirection.rtl,
-        child: Scaffold(
-          appBar: AppBar(
-            title: const Text('المحرر'),
-            actions: [
-              // التصدير بنفس الشكل بالمعاينة (OverlayStyle كامل).
-              TextButton.icon(
-                onPressed: _ready ? _openExport : null,
-                icon: const Icon(Icons.ios_share, color: _gold),
-                label: const Text('تصدير', style: TextStyle(color: _gold)),
-              ),
-            ],
+        child: AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle.light.copyWith(
+              systemNavigationBarColor: _panelBg, statusBarColor: Colors.transparent),
+          child: Scaffold(
+            backgroundColor: _editorBg,
+            body: SafeArea(
+              child: _error != null
+                  ? _errorView()
+                  : !_ready
+                      ? const Center(child: GoldLoader(size: 70))
+                      : _buildBody(),
+            ),
           ),
-          body: _error != null
-              ? Padding(padding: const EdgeInsets.all(16), child: Text(_error!))
-              : !_ready
-                  ? const Center(child: CircularProgressIndicator())
-                  : _buildBody(),
         ),
+      ),
+    );
+  }
+
+  Widget _errorView() => Column(
+        children: [
+          _topBar(),
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(_error!, textAlign: TextAlign.center),
+              ),
+            ),
+          ),
+        ],
+      );
+
+  Widget _topBar() {
+    final q = math.min(_w, _h);
+    final res = q >= 2000 ? '4K' : '${q}P';
+    return SizedBox(
+      height: 54,
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'رجوع',
+            onPressed: () => Navigator.of(context).maybePop(),
+            icon: const Icon(Icons.close_rounded, size: 28, color: Colors.white),
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: const Color(0x1AFFFFFF),
+            ),
+            child: Text(res,
+                textDirection: TextDirection.ltr,
+                style: const TextStyle(
+                    fontFamily: kUiFont, fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white70)),
+          ),
+          const SizedBox(width: 10),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(end: 12),
+            child: GoldButton(
+              label: 'تصدير',
+              icon: Icons.file_upload_outlined,
+              height: 38,
+              fontSize: 15,
+              expand: false,
+              onPressed: _ready ? _openExport : null,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -844,21 +1075,25 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   Widget _buildBody() {
     final w = _w, h = _h;
     final unit = (w < h ? w : h).toDouble();
-    final master = _master!;
     return Column(
       children: [
+        _topBar(),
+        // ------------------------------ المعاينة ------------------------------
         Expanded(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapUp: _onTapUp,
-            onScaleStart: _onScaleStart,
+            onScaleStart: (d) {
+              if (_selected != null) _checkpoint();
+              _onScaleStart(d);
+            },
             onScaleUpdate: _onScaleUpdate,
             onScaleEnd: _onScaleEnd,
             child: Container(
               color: Colors.black,
               alignment: Alignment.center,
-              // مساحة الفيديو الحقيقية بالبكسل (نفس تصدير يوم 8) مصغّرة
-              // بالـ FittedBox: النص بيطلع بنفس النسب على كل الأبعاد.
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              // مساحة الفيديو الحقيقية بالبكسل (نفس التصدير) مصغّرة بالـ FittedBox.
               child: FittedBox(
                 fit: BoxFit.contain,
                 child: SizedBox(
@@ -868,29 +1103,22 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      VideoPlayer(_video!),
-                      ValueListenableBuilder<double>(
-                        valueListenable: _time,
-                        builder: (_, t, __) => AyahOverlayFrame(
-                          videoWidth: w,
-                          videoHeight: h,
-                          cue: _timeline.cueAt(t),
-                          style: _style,
-                          surahName: _surahLookup,
-                          elementKeys: _keys,
+                      RepaintBoundary(child: VideoPlayer(_video!)),
+                      RepaintBoundary(
+                        child: ValueListenableBuilder<OverlayCue?>(
+                          valueListenable: _cue,
+                          builder: (_, cue, __) => _overlayFor(cue),
                         ),
                       ),
-                      // خطوط الإرشاد (بتبيّن وقت السحب/التكبير بس).
                       IgnorePointer(
                         child: CustomPaint(
                           painter: _GuidesPainter(guides: _guides, unit: unit),
                         ),
                       ),
-                      // إطار ذهبي حوالين العنصر المختار.
                       IgnorePointer(
                         child: CustomPaint(
                           painter: _SelectionPainter(
-                            repaint: _time,
+                            repaint: _cue,
                             unit: unit,
                             rect: () => _selected == null ? null : _rectOf(_selected!),
                           ),
@@ -903,99 +1131,376 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
             ),
           ),
         ),
-        // اللوحة بتاخد لحد 48% من الشاشة وبتنسحب (الجوالات الصغيرة).
-        ConstrainedBox(
-          constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(context).height * 0.48),
-          child: _panel(master),
+        _controlsRow(),
+        // اللوحة (أداة مفتوحة) بتاخد مكان الخط الزمني والشريط، زي CapCut.
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOutCubic,
+          transitionBuilder: (child, anim) => SizeTransition(
+            sizeFactor: anim,
+            axisAlignment: -1,
+            child: FadeTransition(opacity: anim, child: child),
+          ),
+          child: _tool != null
+              ? KeyedSubtree(key: ValueKey(_tool), child: _toolPanel(_tool!))
+              : Column(
+                  key: const ValueKey('timeline'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _timelineArea(),
+                    _toolbar(),
+                  ],
+                ),
         ),
       ],
     );
   }
 
-  Widget _panel(VideoPlayerController master) {
-    final dur = master.value.duration;
-    final pos = master.value.position;
-    final maxMs = dur.inMilliseconds.toDouble();
-    return Material(
-      color: _greenLight,
-      child: SafeArea(
-        top: false,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  IconButton.filled(
-                    onPressed: _togglePlay,
-                    icon: Icon(master.value.isPlaying ? Icons.pause : Icons.play_arrow),
-                  ),
-                  Expanded(
-                    child: Slider(
-                      value: pos.inMilliseconds.toDouble().clamp(0, maxMs > 0 ? maxMs : 1),
-                      max: maxMs > 0 ? maxMs : 1,
-                      onChanged: (v) => _seek(Duration(milliseconds: v.round())),
-                    ),
-                  ),
-                  Text('${_fmt(pos)} / ${_fmt(dur)}',
-                      style: const TextStyle(fontSize: 12)),
-                ],
-              ),
-              _cueLabel(),
-              if (_audio != null)
-                const Text('الصوت من ملف التلاوة المنفصل (صوت الفيديو مكتوم).',
-                    style: TextStyle(fontSize: 11, color: Colors.white60)),
-              const SizedBox(height: 6),
-              // 5 تبويبات: بتتمرّر أفقياً عالجوالات الضيقة بدل ما تنضغط.
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SegmentedButton<_Tab>(
-                  showSelectedIcon: false,
-                  segments: [
-                    for (final t in _Tab.values)
-                      ButtonSegment(value: t, label: Text(t.label)),
+  // كاش لويدجت النص: نفس المدخلات = نفس الويدجت (Flutter ما بيعيد بناءه).
+  Widget? _overlayCache;
+  OverlayCue? _overlayCue;
+  OverlayStyle? _overlayStyle;
+  Map<int, String>? _overlayNames;
+
+  Widget _overlayFor(OverlayCue? cue) {
+    if (_overlayCache != null &&
+        identical(cue, _overlayCue) &&
+        identical(_style, _overlayStyle) &&
+        identical(_surahNames, _overlayNames)) {
+      return _overlayCache!;
+    }
+    _overlayCue = cue;
+    _overlayStyle = _style;
+    _overlayNames = _surahNames;
+    return _overlayCache = AyahOverlayFrame(
+      videoWidth: _w,
+      videoHeight: _h,
+      cue: cue,
+      style: _style,
+      surahName: _surahLookup,
+      elementKeys: _keys,
+    );
+  }
+
+  String _clockText(double t) {
+    final ms = (t * 1000).round();
+    final m = ms ~/ 60000, sec = (ms ~/ 1000) % 60;
+    return '${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+  }
+
+  /// سطر التشغيل: الوقت | تشغيل | تراجع/إعادة (زي CapCut).
+  Widget _controlsRow() {
+    final total = _clockText(_duration);
+    return Container(
+      height: 52,
+      color: _editorBg,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Directionality(
+        textDirection: TextDirection.ltr,
+        child: Row(
+          children: [
+            ValueListenableBuilder<double>(
+              valueListenable: _time,
+              builder: (_, t, __) => RichText(
+                text: TextSpan(
+                  style: const TextStyle(fontFamily: kUiFont, fontSize: 13),
+                  children: [
+                    TextSpan(text: _clockText(t), style: const TextStyle(color: Colors.white)),
+                    TextSpan(text: ' / $total', style: const TextStyle(color: Colors.white54)),
                   ],
-                  selected: {_tab},
-                  onSelectionChanged: (s) => setState(() => _tab = s.first),
                 ),
               ),
-              const SizedBox(height: 8),
-              if (!_can && _tab != _Tab.templates && _tab != _Tab.timeline)
-                const _Note('التخصيص (العناصر والخطوط والألوان) بالخطط المدفوعة. '
-                    'بالمجاني: القوالب الجاهزة.'),
-              switch (_tab) {
-                _Tab.elements => _elementsTab(),
-                _Tab.fonts => _fontsTab(),
-                _Tab.colors => _colorsTab(),
-                _Tab.timeline => _timelineTab(),
-                _Tab.templates => _templatesTab(),
-              },
-            ],
-          ),
+            ),
+            const Spacer(),
+            ValueListenableBuilder<bool>(
+              valueListenable: _playing,
+              builder: (_, playing, __) => GestureDetector(
+                onTap: _togglePlay,
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0x14FFFFFF)),
+                  child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      size: 34, color: Colors.white),
+                ),
+              ),
+            ),
+            const Spacer(),
+            IconButton(
+              tooltip: 'تراجع',
+              onPressed: _undo.isEmpty ? null : _doUndo,
+              icon: const Icon(Icons.undo_rounded),
+              color: Colors.white,
+              disabledColor: Colors.white24,
+            ),
+            IconButton(
+              tooltip: 'إعادة',
+              onPressed: _redo.isEmpty ? null : _doRedo,
+              icon: const Icon(Icons.redo_rounded),
+              color: Colors.white,
+              disabledColor: Colors.white24,
+            ),
+          ],
         ),
       ),
     );
   }
 
-  String _fmt(Duration d) {
-    final s = d.inSeconds;
-    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  Widget _timelineArea() {
+    return Container(
+      color: _panelBg,
+      padding: const EdgeInsets.only(top: 6),
+      child: Stack(
+        children: [
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: EditorTimeline(
+              key: _timelineKey,
+              segments: _segments,
+              duration: _duration,
+              peaks: _peaks,
+              thumbs: _thumbs,
+              playhead: _time,
+              selectedIndex: _selectedSegment,
+              onScrubStart: _onScrubStart,
+              onScrub: _onScrub,
+              onScrubEnd: _onScrubEnd,
+              onSelect: _selectSegment,
+              onHandleStart: _onHandleStart,
+              onDragHandle: _onDragHandle,
+              onHandleEnd: _onHandleEnd,
+              onAdd: _addSegmentFlow,
+            ),
+          ),
+          // زر "+" ثابت عطرف مسار الآيات (زي زر الإضافة بـ CapCut).
+          Positioned(
+            right: 8,
+            top: 6 + TimelineMetrics.ayahTop + (TimelineMetrics.ayahH - 36) / 2,
+            child: Material(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(9),
+              elevation: 3,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(9),
+                onTap: _addSegmentFlow,
+                child: const SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: Icon(Icons.add_rounded, color: Colors.black, size: 26),
+                ),
+              ),
+            ),
+          ),
+          if (_peaks == null)
+            const Positioned(
+              left: 10,
+              top: 6 + TimelineMetrics.audioTop + 6,
+              child: SizedBox(
+                  width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+        ],
+      ),
+    );
   }
 
-  Widget _cueLabel() => ValueListenableBuilder<double>(
-        valueListenable: _time,
-        builder: (_, t, __) {
-          final c = _timeline.cueAt(t);
-          final label = c == null ? 'ما في نص ظاهر هلأ' : c.item.segment.describe();
-          return Text(label,
-              style: const TextStyle(fontSize: 11, color: Colors.white60),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis);
-        },
-      );
+  int get _reviewCount => [
+        for (final s in _segments)
+          if ((s.needsReview || s.inferred) && s.kind != SegmentKind.istiadha) s
+      ].length;
+
+  /// شريط الأدوات السفلي: أدوات عامة، أو أدوات الآية المحددة (زي CapCut).
+  Widget _toolbar() {
+    final sel = _selectedSegment;
+    final hasSel = sel != null && sel < _segments.length;
+    final items = <Widget>[];
+    if (hasSel) {
+      final s = _segments[sel];
+      items.addAll([
+        _ToolButton(
+          icon: Icons.chevron_right_rounded,
+          label: 'رجوع',
+          onTap: () => _selectSegment(null),
+          dim: true,
+        ),
+        _ToolButton(icon: Icons.swap_horiz_rounded, label: 'تغيير الآية', onTap: () => _changeAyahFlow(sel)),
+        _ToolButton(icon: Icons.tune_rounded, label: 'التوقيت', onTap: () => _openTool(_Tool.details)),
+        _ToolButton(icon: Icons.play_circle_outline_rounded, label: 'تشغيلها', onTap: () => _playSegment(sel)),
+        if (s.needsReview || s.inferred)
+          _ToolButton(
+              icon: Icons.check_circle_outline_rounded,
+              label: 'صح ✓',
+              color: AyahColors.review,
+              onTap: () => _confirm(sel)),
+        if (s.kind == SegmentKind.nonQuran)
+          _ToolButton(icon: Icons.edit_note_rounded, label: 'النص', onTap: () => _openTool(_Tool.details))
+        else
+          _ToolButton(
+              icon: Icons.text_snippet_outlined, label: 'نص خاص', onTap: () => _convertToNonQuran(sel)),
+        _ToolButton(icon: Icons.skip_previous_rounded, label: 'السابقة', onTap: () => _step(-1)),
+        _ToolButton(icon: Icons.skip_next_rounded, label: 'التالية', onTap: () => _step(1)),
+        _ToolButton(
+            icon: Icons.delete_outline_rounded,
+            label: 'حذف',
+            color: AyahColors.danger,
+            onTap: () => _confirmDelete(sel)),
+      ]);
+    } else {
+      final review = _reviewCount;
+      items.addAll([
+        _ToolButton(icon: Icons.add_box_outlined, label: 'إضافة', onTap: _addSegmentFlow),
+        _ToolButton(icon: _Tool.elements.icon, label: 'العناصر', onTap: () => _openTool(_Tool.elements)),
+        _ToolButton(icon: _Tool.fonts.icon, label: 'الخطوط', onTap: () => _openTool(_Tool.fonts)),
+        _ToolButton(icon: _Tool.colors.icon, label: 'الألوان', onTap: () => _openTool(_Tool.colors)),
+        _ToolButton(icon: _Tool.templates.icon, label: 'القوالب', onTap: () => _openTool(_Tool.templates)),
+        if (review > 0)
+          _ToolButton(
+            icon: Icons.priority_high_rounded,
+            label: 'مراجعة',
+            badge: review,
+            color: AyahColors.review,
+            onTap: () => _selectSegment(nextNeedingReview(_segments, after: -1)),
+          ),
+        _ToolButton(icon: Icons.zoom_in_rounded, label: 'تكبير', onTap: () => _timelineKey.currentState?.zoomBy(1.6)),
+        _ToolButton(icon: Icons.zoom_out_rounded, label: 'تصغير', onTap: () => _timelineKey.currentState?.zoomBy(1 / 1.6)),
+        if (_hasEdits)
+          _ToolButton(icon: Icons.restore_rounded, label: 'الأصل', onTap: _resetEdits, dim: true),
+      ]);
+    }
+    return Container(
+      height: 78,
+      decoration: const BoxDecoration(
+        color: _editorBg,
+        border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
+      ),
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        children: items,
+      ),
+    );
+  }
+
+  void _step(int d) {
+    final sel = _selectedSegment;
+    if (sel == null) return;
+    _selectSegment((sel + d).clamp(0, _segments.length - 1));
+  }
+
+  Future<void> _confirmDelete(int index) async {
+    final ok = await showAyahDialog<bool>(
+      context,
+      (ctx) => AlertDialog(
+        title: const Text('حذف المقطع؟'),
+        content: const Text('بتقدر ترجعه بزر التراجع.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AyahColors.danger, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await _delete(index);
+  }
+
+  void _openTool(_Tool t) {
+    HapticFeedback.selectionClick();
+    setState(() => _tool = t);
+  }
+
+  void _closeTool() => setState(() => _tool = null);
+
+  /// لوحة الأداة (مكان الخط الزمني) بعنوان وزر ✓.
+  Widget _toolPanel(_Tool t) {
+    final maxH = MediaQuery.sizeOf(context).height * 0.42;
+    Widget body;
+    switch (t) {
+      case _Tool.elements:
+        body = _elementsTab();
+      case _Tool.fonts:
+        body = _fontsTab();
+      case _Tool.colors:
+        body = _colorsTab();
+      case _Tool.templates:
+        body = _templatesTab();
+      case _Tool.details:
+        final sel = _selectedSegment;
+        body = sel == null || sel >= _segments.length
+            ? const _Note('اختار آية من الخط الزمني أول.')
+            : SegmentDetailPanel(
+                segment: _segments[sel],
+                index: sel,
+                count: _segments.length,
+                playhead: _time,
+                surahName: (n) => _surahLookup(n) ?? 'سورة $n',
+                scales: _can ? _segmentScalesFor(sel) : const {},
+                hasOwnScales: _style.segmentScales.containsKey(sel),
+                onBounds: (a, b) => _onBounds(sel, a, b),
+                onChangeAyah: () => _changeAyahFlow(sel),
+                onConvertToNonQuran: () => _convertToNonQuran(sel),
+                onUserText: (x) => _onUserText(sel, x),
+                onConfirm: () => _confirm(sel),
+                onDelete: () => _confirmDelete(sel),
+                onScale: (e, v) => _setSegmentScale(sel, e, v),
+                onResetScales: () => _resetSegmentScales(sel),
+                onPlay: () => _playSegment(sel),
+                onStep: (d) => _step(d),
+                onClose: _closeTool,
+              );
+    }
+    return Container(
+      constraints: BoxConstraints(maxHeight: maxH, minHeight: 200),
+      decoration: const BoxDecoration(
+        color: _panelBg,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        border: Border(top: BorderSide(color: Color(0x40DDB45C))),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: 50,
+            child: Row(
+              children: [
+                const SizedBox(width: 16),
+                Icon(t.icon, color: _gold, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(t.label,
+                      style: const TextStyle(
+                          fontFamily: kUiFont, fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
+                ),
+                IconButton(
+                  tooltip: 'تم',
+                  onPressed: _closeTool,
+                  icon: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: const BoxDecoration(shape: BoxShape.circle, gradient: AyahColors.goldVertical),
+                    child: const Icon(Icons.check_rounded, color: AyahColors.ink, size: 22),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ),
+          ),
+          if (!_can && t != _Tool.templates && t != _Tool.details)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: _Note('التخصيص (العناصر والخطوط والألوان) بالخطط المدفوعة. بالمجاني: القوالب الجاهزة.'),
+            ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: body,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   // --------------------------- تبويب العناصر ---------------------------
 
@@ -1293,103 +1798,6 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     );
   }
 
-  // --------------------------- تبويب الخط الزمني ---------------------------
-
-  Widget _timelineTab() {
-    final sel = _selectedSegment;
-    final review = [
-      for (final s in _segments)
-        if ((s.needsReview || s.inferred) && s.kind != SegmentKind.istiadha) s
-    ].length;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            FilledButton.icon(
-              style: FilledButton.styleFrom(
-                  minimumSize: const Size(0, 44),
-                  backgroundColor: _gold,
-                  foregroundColor: Colors.black),
-              onPressed: _addSegmentFlow,
-              icon: const Icon(Icons.add),
-              label: const Text('إضافة مقطع'),
-            ),
-            if (review > 0)
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 44),
-                    foregroundColor: const Color(0xFFE8892B),
-                    side: const BorderSide(color: Color(0xFFE8892B))),
-                onPressed: () =>
-                    _selectSegment(nextNeedingReview(_segments, after: sel ?? -1)),
-                icon: const Icon(Icons.priority_high),
-                label: Text('بده مراجعة: $review'),
-              ),
-            if (_hasEdits)
-              TextButton.icon(
-                style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
-                onPressed: _resetEdits,
-                icon: const Icon(Icons.restore, size: 20),
-                label: const Text('رجوع للتحليل الأصلي'),
-              ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        if (sel == null)
-          const _Note('اكبس على مقطع لتعدّل وقته (بالكتابة أو بسحب المقبضين)، '
-              'تغيّر آيته، أو تحذفه. اكبس على المسطرة فوق لتشغّل من أي مكان، '
-              'وكبّر الخط بإصبعين.'),
-        if (_peaks == null)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 4),
-            child: Row(children: [
-              SizedBox(
-                  width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-              SizedBox(width: 8),
-              Text('عم نجهّز موجة الصوت…',
-                  style: TextStyle(fontSize: 12, color: Colors.white60)),
-            ]),
-          ),
-        SegmentTimelineView(
-          segments: _segments,
-          duration: _duration,
-          peaks: _peaks,
-          playhead: _time,
-          selectedIndex: sel,
-          onSeek: (s) => _seek(Duration(milliseconds: (s * 1000).round())),
-          onSelect: _selectSegment,
-          onDragHandle: _onDragHandle,
-          onDragFinished: () => _saveEdits(now: true),
-        ),
-        if (sel != null && sel < _segments.length)
-          SegmentDetailPanel(
-            segment: _segments[sel],
-            index: sel,
-            count: _segments.length,
-            playhead: _time,
-            surahName: (n) => _surahLookup(n) ?? 'سورة $n',
-            scales: _can ? _segmentScalesFor(sel) : const {},
-            hasOwnScales: _style.segmentScales.containsKey(sel),
-            onBounds: (a, b) => _onBounds(sel, a, b),
-            onChangeAyah: () => _changeAyahFlow(sel),
-            onConvertToNonQuran: () => _convertToNonQuran(sel),
-            onUserText: (t) => _onUserText(sel, t),
-            onConfirm: () => _confirm(sel),
-            onDelete: () => _delete(sel),
-            onScale: (e, v) => _setSegmentScale(sel, e, v),
-            onResetScales: () => _resetSegmentScales(sel),
-            onPlay: () => _playSegment(sel),
-            onStep: (d) => _selectSegment((sel + d).clamp(0, _segments.length - 1)),
-            onClose: () => _selectSegment(null),
-          ),
-      ],
-    );
-  }
-
   // ---------------------------- تبويب القوالب ----------------------------
 
   Widget _templatesTab() {
@@ -1517,6 +1925,69 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   Future<void> _deleteTemplate(OverlayTemplate t) async {
     await _templates.delete(t.id);
     if (mounted) setState(() {});
+  }
+}
+
+/// زر بشريط الأدوات السفلي (أيقونة + اسم)، زي CapCut.
+class _ToolButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final Color? color;
+  final int? badge;
+  final bool dim;
+
+  const _ToolButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.color,
+    this.badge,
+    this.dim = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = color ?? (dim ? Colors.white60 : Colors.white);
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      child: SizedBox(
+        width: 70,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(icon, color: c, size: 26),
+                if (badge != null)
+                  Positioned(
+                    top: -6,
+                    left: -10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                          color: AyahColors.review, borderRadius: BorderRadius.circular(10)),
+                      child: Text('$badge',
+                          style: const TextStyle(
+                              fontFamily: kUiFont, fontSize: 10, fontWeight: FontWeight.w700, color: Colors.black)),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontFamily: kUiFont, fontSize: 11.5, color: c)),
+          ],
+        ),
+      ),
+    );
   }
 }
 

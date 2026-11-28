@@ -40,7 +40,7 @@ jobs:
         run: flutter analyze || true
 
       - name: Tests (QuranMatcher + WAV/ASR helpers + pipeline + overlay + export)
-        run: flutter test test/matching test/asr test/pipeline test/overlay test/export test/editor
+        run: flutter test test/matching test/asr test/pipeline test/overlay test/export test/editor test/projects
 
       # بس معالجات الجوالات الحقيقية (arm64 + arm 32-bit)، بدون x86_64 (محاكي).
       - name: Build debug APK
