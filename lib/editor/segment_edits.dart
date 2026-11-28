@@ -81,8 +81,10 @@ SegmentEdit changeAyah(
   return SegmentEdit(out, _identity(segs.length), focus: index);
 }
 
-/// حذف المقطع [index]. لو كان جزء من آية مقسومة، الأجزاء الباقية من نفس
-/// التلاوة بتنبني من جديد (عدد الأجزاء، رقم الآية مع آخر جزء، قطع التفسير).
+/// حذف المقطع [index]. لو كان جزء من آية مقسومة، **الأجزاء الباقية بتضل زي
+/// ما هي** (نصها، رقم الآية، تفسيرها) — طلب أنس 2026-11-28: "أحذف أي قسم ما
+/// يتأثر باقي الأقسام". بس ترقيم الأجزاء بيتحدّث (3 أجزاء → 1/2 و2/2) عشان يضلوا
+/// تلاوة وحدة بالمحرر. [text] و[options] ما عاد إلهم دور (مخلّيين للتوافق).
 SegmentEdit deleteSegment(
   QuranTextSource? text,
   List<RecitationSegment> segs,
@@ -90,21 +92,13 @@ SegmentEdit deleteSegment(
   PipelineOptions options = const PipelineOptions(),
 }) {
   final (from, to) = readingGroupAt(segs, index);
-  final victim = segs[index];
   final out = [...segs]..removeAt(index);
-  if (text != null && to > from && victim.surah != null && victim.ayah != null) {
-    final newFrom = from, newTo = to - 1; // بالقائمة الجديدة
-    final rest = buildAyahReading(
-      text,
-      victim.surah!,
-      victim.ayah!,
-      [for (var i = newFrom; i <= newTo; i++) (out[i].start, out[i].end)],
-      options: options,
-      confidence: out[newFrom].confidence,
-      needsReview: [for (var i = newFrom; i <= newTo; i++) out[i].needsReview]
-          .any((x) => x),
-    );
-    out.replaceRange(newFrom, newTo + 1, rest);
+  if (to > from) {
+    final n = to - from; // عدد الباقي
+    for (var k = 0; k < n; k++) {
+      final i = from + k;
+      out[i] = out[i].copyWith(part: k + 1, partCount: n);
+    }
   }
   return SegmentEdit(out, mappingForDelete(segs.length, index));
 }

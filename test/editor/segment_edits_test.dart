@@ -113,6 +113,22 @@ void main() {
       expect(e.segments[2].ref, '2:256');
     });
 
+    test('حذف أي جزء من آية مقسومة: الباقي بيضل بنصه (طلب أنس 2026-11-28)', () {
+      final parts = buildAyahReading(text, 2, 255, [(0.0, 4.0), (4.0, 8.0), (8.0, 12.0), (12.0, 16.0)]);
+      final e = deleteSegment(text, parts, 1);
+      expect(e.segments, hasLength(3));
+      expect([for (final s in e.segments) s.text], [parts[0].text, parts[2].text, parts[3].text]);
+      expect([for (final s in e.segments) s.part], [1, 2, 3]);
+      expect(e.segments.every((s) => s.partCount == 3), isTrue);
+      expect(e.segments.last.showAyahNumber, isTrue);
+      // جزئين → حذف واحد: الباقي ما بيرجع آية كاملة.
+      final two = buildAyahReading(text, 2, 255, [(0.0, 6.0), (6.0, 14.0)]);
+      final e2 = deleteSegment(text, two, 1);
+      expect(e2.segments.single.text, two[0].text);
+      expect(e2.segments.single.showAyahNumber, isFalse);
+      expect(e2.segments.single.text.length, lessThan(text.ayah(2, 255)!.uthmani.length));
+    });
+
     test('حجم خاص بمقطع بيلحقه لمكانه الجديد بعد الحذف، والمحذوف بيضيع حجمه', () {
       final segs = [
         for (var i = 0; i < 4; i++) nonQuran(i * 2.0, i * 2.0 + 1.5, user: 'نص $i'),

@@ -321,4 +321,65 @@ void main() {
         reason: segs2.map((s) => s.describe()).join('\n'));
     expect(segs2.last.suggestedRef, '1:5');
   });
+
+  group('القارئ قرأ نص الآية ووقف وبعدين رجع (طلب أنس 2026-11-28)', () {
+    String asrOf(int su, int a) => ArabicNormalizer.simple(text.ayah(su, a)!.uthmani);
+    String firstWords(int su, int a, int n) => asrOf(su, a).split(' ').take(n).join(' ');
+
+    test('detectReread: قراءة ناقصة + قراءة كاملة جوا نفس النص', () {
+      final k = ArabicNormalizer.key(text.ayah(40, 19)!.uthmani);
+      final half = ArabicNormalizer.key(firstWords(40, 19, 3));
+      final r = detectReread(half + k, k);
+      expect(r, isNotNull);
+      expect(r!.qSplit, closeTo(half.length, 2));
+      expect(r.firstEnd, closeTo(half.length, 3));
+      expect(r.secondStart, lessThanOrEqualTo(2));
+      // بدون إعادة: ولا شي.
+      expect(detectReread(k, k), isNull);
+      final k2 = ArabicNormalizer.key(text.ayah(2, 255)!.uthmani);
+      expect(detectReread(k2, k2), isNull);
+    });
+
+    test('جوا نفس مقطع الصوت: الأولى بس اللي انقرأ، والتانية كاملة برقمها', () {
+      final segs = buildRecitationSegments(matcher, text, [
+        seg(0, 8, asrOf(40, 18)),
+        seg(8.5, 18, '${firstWords(40, 19, 3)} ${asrOf(40, 19)}'),
+        seg(18.5, 28, asrOf(40, 20)),
+      ]);
+      final mine = segs.where((s) => s.ref == '40:19').toList();
+      expect(mine, hasLength(2), reason: segs.map((s) => s.describe()).join('\n'));
+      final full = text.ayah(40, 19)!.uthmani;
+      expect(mine[0].showAyahNumber, isFalse);
+      expect(mine[0].text.length, lessThan(full.length * 0.75));
+      expect(ArabicNormalizer.key(mine[0].text), ArabicNormalizer.key(firstWords(40, 19, 3)));
+      expect(mine[1].text, full);
+      expect(mine[1].showAyahNumber, isTrue);
+      expect(mine[0].end, lessThanOrEqualTo(mine[1].start + 1e-9));
+    });
+
+    test('بمقطع لحاله قصير قبل القراءة الكاملة: نفس الشي', () {
+      final segs = buildRecitationSegments(matcher, text, [
+        seg(0, 8, asrOf(40, 18)),
+        seg(8.5, 10.5, firstWords(40, 19, 3)),
+        seg(11.5, 18, asrOf(40, 19)),
+        seg(18.5, 28, asrOf(40, 20)),
+      ]);
+      final mine = segs.where((s) => s.ref == '40:19').toList();
+      expect(mine, hasLength(2), reason: segs.map((s) => s.describe()).join('\n'));
+      expect(mine[0].showAyahNumber, isFalse);
+      expect(ArabicNormalizer.key(mine[0].text), ArabicNormalizer.key(firstWords(40, 19, 3)));
+      expect(mine[1].text, text.ayah(40, 19)!.uthmani);
+    });
+
+    test('تلاوة عادية بدون إعادة ما بتنقسم', () {
+      final segs = buildRecitationSegments(matcher, text, [
+        seg(0, 8, asrOf(40, 18)),
+        seg(8.5, 14, asrOf(40, 19)),
+        seg(14.5, 24, asrOf(40, 20)),
+      ]);
+      expect(segs.map((s) => s.ref).toList(), ['40:18', '40:19', '40:20'],
+          reason: segs.map((s) => s.describe()).join('\n'));
+      expect(segs.every((s) => s.kind == SegmentKind.fullAyah), isTrue);
+    });
+  });
 }
