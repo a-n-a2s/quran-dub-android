@@ -51,6 +51,24 @@ jobs:
           path: build/ui_preview/
           if-no-files-found: ignore
 
+      # لقطات الواجهة كمان على فرع ui-preview (بتنشاف بالمتصفح أو git).
+      - name: نشر لقطات الواجهة (فرع ui-preview)
+        if: always()
+        continue-on-error: true
+        run: |
+          set -e
+          [ -d build/ui_preview ] || exit 0
+          d=$(mktemp -d)
+          cp build/ui_preview/*.png "$d/" 2>/dev/null || exit 0
+          cd "$d"
+          git init -q -b ui-preview
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          echo "run ${{ github.run_id }} sha ${{ github.sha }}" > RUN.txt
+          git add -A
+          git commit -qm "ui preview ${{ github.run_number }}"
+          git push -fq "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ui-preview
+
       - name: Build debug APK
         run: flutter build apk --debug --target-platform android-arm,android-arm64
 
