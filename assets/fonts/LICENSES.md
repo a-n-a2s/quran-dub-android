@@ -32,3 +32,16 @@ Tanzil عندنا (~6600 مكان)، وبيرمّزها بأماكن ثانية 
 **6202 آية مطابقة بكسل بكسل**، والـ 34 الباقية فروقها بتعديلات KFGQPC الخاصة على
 كلمات معينة (مثلاً "كلا" بتتكتب عندهم بمدّة/كشيدة بترتيب علامات مختلف)، مش
 حروف ناقصة. Amiri Quran بيغطي كل حروف النص بدون أي تحويل.
+
+## خط الواجهة: IBM Plex Sans Arabic (الواجهة الجديدة، 2026-11-28)
+
+- الملفات: `assets/fonts/ui/IBMPlexSansArabic-{Regular,Medium,SemiBold,Bold}.ttf` من
+  مستودع `google/fonts` (`ofl/ibmplexsansarabic`).
+- الرخصة: **SIL OFL 1.1** (نسختها `assets/fonts/ui/OFL-IBMPlexSansArabic.txt`) —
+  استخدام تجاري وتضمين بتطبيق مدفوع مسموح، بشرط إبقاء ملف الرخصة. ممنوع بيع الخط لحاله.
+
+## خط الشعار: Aref Ruqaa Bold
+
+- كلمة "آية" بالشعار مرسومة بخط **Aref Ruqaa** (SIL OFL 1.1، من `google/fonts`)،
+  وبتنحوّل لصورة PNG بـ `tool/logo/make_logo.py`. الخط نفسه **مش مضمّن بالتطبيق**
+  (موجود بـ `tool/logo/fonts` لإعادة توليد الشعار بس).
