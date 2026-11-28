@@ -11,8 +11,11 @@ import '../export/export_request.dart';
 import '../export/export_settings.dart';
 import '../export/export_status.dart';
 import '../export/overlay_renderer.dart';
+import '../overlay/overlay_colors.dart';
 import '../overlay/overlay_metrics.dart';
 import '../platform/video_exporter.dart';
+import '../ui/app_theme.dart';
+import '../ui/ayah_widgets.dart';
 
 /// شاشة التصدير (يوم 8، بسيطة، مش التصميم النهائي): ملخص → تجهيز النص (صور
 /// بـ AyahOverlayFrame) → تصدير بالخلفية (إشعار) → نجاح (مشاركة/فتح/حفظ) أو
@@ -266,126 +269,232 @@ class _ExportScreenState extends State<ExportScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(title: const Text('تصدير الفيديو')),
-      body: Stack(
+      body: AyahBackground(
+        child: Stack(
+          children: [
+            Positioned.fill(child: SafeArea(child: _body())),
+            // مكان رسم صور النص (مخفي، حجمه صفر).
+            Positioned(left: 0, top: 0, child: OverlayRenderHost(controller: _renderer)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoRow(IconData icon, String text) {
+    final p = AyahPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
         children: [
-          Positioned.fill(child: _body()),
-          // مكان رسم صور النص (مخفي، حجمه صفر).
-          Positioned(left: 0, top: 0, child: OverlayRenderHost(controller: _renderer)),
+          Icon(icon, size: 20, color: p.accentText),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Text(text, style: TextStyle(fontFamily: kUiFont, fontSize: 14, color: p.text))),
         ],
       ),
     );
   }
 
   Widget _body() {
+    final p = AyahPalette.of(context);
+    final tt = Theme.of(context).textTheme;
     final s = _status;
     final req = widget.request;
     final size = req.size;
     final info = req.input.videoInfo;
     final audio = ExportAudio.forInput(req.input);
+    final idleLike = s.phase == ExportPhase.idle ||
+        s.phase == ExportPhase.failed ||
+        s.phase == ExportPhase.cancelled;
     return ListView(
-      padding: const EdgeInsets.all(16),
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(18, 8, 18, 32),
       children: [
-        Text('الفيديو: ${size.width}×${size.height}'
-            '${size.width != info.rotatedWidth || size.height != info.rotatedHeight ? ' (الأصل ${info.rotatedWidth}×${info.rotatedHeight})' : ''}'
-            '، ${info.durationSeconds.toStringAsFixed(1)} ثانية'),
-        Text('الشكل: ${req.style}'),
-        Text(switch (audio) {
-          ExternalAudio() => 'الصوت: ملف التلاوة المنفصل (صوت الفيديو مكتوم).',
-          NoAudio() => 'الفيديو بدون صوت.',
-          OriginalAudio() => 'الصوت: صوت الفيديو الأصلي.',
-        }),
-        const SizedBox(height: 16),
-        if (_otherExportRunning && !s.phase.isRunning)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 12),
-            child: Text('في تصدير ثاني شغّال هلأ. استنى لحد ما يخلص.'),
-          ),
-        if (s.phase == ExportPhase.idle ||
-            s.phase == ExportPhase.failed ||
-            s.phase == ExportPhase.cancelled) ...[
-          if (s.phase != ExportPhase.idle)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Text(s.label,
-                  style: TextStyle(
-                      color: s.phase == ExportPhase.failed
-                          ? Theme.of(context).colorScheme.error
-                          : null)),
-            ),
-          FilledButton.icon(
-            onPressed: _otherExportRunning ? null : _start,
-            icon: const Icon(Icons.movie_creation_outlined),
-            label: Text(s.phase == ExportPhase.idle ? 'ابدأ التصدير' : 'جرّب كمان مرة'),
-          ),
-        ],
-        if (s.phase.isRunning) ...[
-          Text(s.label),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(value: s.progress),
-          const SizedBox(height: 4),
-          Text('${(s.progress * 100).toStringAsFixed(0)}٪'),
-          const SizedBox(height: 8),
-          Text(
-            s.phase == ExportPhase.preparing
-                ? 'خليك بالتطبيق لحد ما يجهز النص (ثواني)، وبعدها بتقدر تطلع والتصدير بيكمّل بالخلفية.'
-                : 'بتقدر تطلع من التطبيق: التصدير بيكمّل بالخلفية'
-                    '${_notificationsOff ? ' (الإشعارات مطفية، فارجع للتطبيق تشوف النتيجة).' : ' ورح يوصلك إشعار لما يخلص.'}',
-            style: const TextStyle(fontSize: 12, color: Colors.black54),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            onPressed: _cancelRequested ? null : _cancel,
-            icon: const Icon(Icons.close),
-            label: const Text('إلغاء'),
-          ),
-        ],
-        if (s.phase == ExportPhase.done) ...[
-          Text(s.label, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text(
-              '${s.width}×${s.height}، ${s.fileSizeBytes != null ? formatBytes(s.fileSizeBytes!) : ''}'
-              '، خلص بـ ${((s.elapsedMs ?? 0) / 1000).toStringAsFixed(0)} ثانية'),
-          Text(s.savedToGallery
-              ? 'محفوظ بالمعرض: ${s.galleryPath}'
-              : 'لسا مش محفوظ بالمعرض.'),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+        GlassCard(
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              FilledButton.icon(
-                onPressed: () => _call(VideoExporter.share, 'ما انفتحت المشاركة'),
-                icon: const Icon(Icons.share),
-                label: const Text('مشاركة'),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _call(VideoExporter.open, 'ما في تطبيق يفتح الفيديو'),
-                icon: const Icon(Icons.play_circle_outline),
-                label: const Text('فتح'),
-              ),
-              if (!s.savedToGallery)
-                OutlinedButton.icon(
-                  onPressed: () => _call(() async {
-                    await VideoExporter.requestStoragePermission();
-                    await VideoExporter.saveToGallery();
-                  }, 'ما انحفظ'),
-                  icon: const Icon(Icons.save_alt),
-                  label: const Text('حفظ بالمعرض'),
-                ),
+              Text('ملخص الفيديو', style: tt.titleMedium),
+              const SizedBox(height: 6),
+              _infoRow(Icons.aspect_ratio_rounded,
+                  '${size.width}×${size.height}'
+                  '${size.width != info.rotatedWidth || size.height != info.rotatedHeight ? ' (الأصل ${info.rotatedWidth}×${info.rotatedHeight})' : ''}'
+                  ' • ${info.durationSeconds.toStringAsFixed(1)} ثانية'),
+              _infoRow(
+                  Icons.graphic_eq_rounded,
+                  switch (audio) {
+                    ExternalAudio() => 'الصوت: ملف التلاوة المنفصل',
+                    NoAudio() => 'الفيديو بدون صوت',
+                    OriginalAudio() => 'الصوت: صوت الفيديو الأصلي',
+                  }),
+              _infoRow(Icons.text_fields_rounded,
+                  'النص: ${req.style.color == OverlayTextColor.white ? 'أبيض' : 'أسود'}'
+                  '${req.style.shadowStrength > 0 ? ' • ظل ${(req.style.shadowStrength * 100).round()}٪' : ''}'),
             ],
           ),
-        ],
+        ),
+        const SizedBox(height: 16),
+        if (_otherExportRunning && !s.phase.isRunning)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text('في تصدير ثاني شغّال هلأ. استنى لحد ما يخلص.',
+                style: TextStyle(fontFamily: kUiFont, color: AyahColors.review)),
+          ),
+        if (idleLike)
+          GlassCard(
+            padding: const EdgeInsets.fromLTRB(20, 26, 20, 22),
+            borderColor: s.phase == ExportPhase.failed ? AyahColors.danger.withValues(alpha: 0.7) : null,
+            child: Column(
+              children: [
+                ShaderMask(
+                  shaderCallback: (r) => AyahColors.goldVertical.createShader(r),
+                  child: Icon(
+                      s.phase == ExportPhase.failed
+                          ? Icons.error_outline_rounded
+                          : Icons.movie_filter_rounded,
+                      size: 64,
+                      color: Colors.white),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  s.phase == ExportPhase.idle ? 'جاهز للتصدير' : s.label,
+                  textAlign: TextAlign.center,
+                  style: tt.titleMedium?.copyWith(
+                      color: s.phase == ExportPhase.failed ? AyahColors.danger : null),
+                ),
+                const SizedBox(height: 6),
+                Text('الآيات والتفسير رح ينحرقوا بالفيديو بنفس الشكل اللي شفته بالمحرر.',
+                    textAlign: TextAlign.center, style: tt.bodySmall),
+                const SizedBox(height: 18),
+                GoldButton(
+                  onPressed: _otherExportRunning ? null : _start,
+                  icon: Icons.file_download_rounded,
+                  label: s.phase == ExportPhase.idle ? 'ابدأ التصدير' : 'جرّب كمان مرة',
+                ),
+              ],
+            ),
+          ),
+        if (s.phase.isRunning)
+          GlassCard(
+            highlight: true,
+            padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
+            child: Column(
+              children: [
+                SizedBox(
+                  width: 150,
+                  height: 150,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      SizedBox.expand(
+                        child: CircularProgressIndicator(
+                          value: s.progress,
+                          strokeWidth: 9,
+                          strokeCap: StrokeCap.round,
+                          backgroundColor: p.dark ? Colors.white10 : Colors.black12,
+                        ),
+                      ),
+                      Text('${(s.progress * 100).toStringAsFixed(0)}٪',
+                          style: TextStyle(
+                              fontFamily: kUiFont,
+                              fontSize: 34,
+                              fontWeight: FontWeight.w700,
+                              color: p.accentText)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(s.label, textAlign: TextAlign.center, style: tt.titleMedium),
+                const SizedBox(height: 8),
+                Text(
+                  s.phase == ExportPhase.preparing
+                      ? 'خليك بالتطبيق لحد ما يجهز النص (ثواني)، وبعدها بتقدر تطلع والتصدير بيكمّل بالخلفية.'
+                      : 'بتقدر تطلع من التطبيق: التصدير بيكمّل بالخلفية'
+                          '${_notificationsOff ? ' (الإشعارات مطفية، فارجع للتطبيق تشوف النتيجة).' : ' ورح يوصلك إشعار لما يخلص.'}',
+                  textAlign: TextAlign.center,
+                  style: tt.bodySmall,
+                ),
+                const SizedBox(height: 16),
+                GoldOutlineButton(
+                  onPressed: _cancelRequested ? null : _cancel,
+                  icon: Icons.close_rounded,
+                  label: 'إلغاء',
+                ),
+              ],
+            ),
+          ),
+        if (s.phase == ExportPhase.done)
+          GlassCard(
+            highlight: true,
+            padding: const EdgeInsets.fromLTRB(20, 26, 20, 20),
+            child: Column(
+              children: [
+                Container(
+                  width: 74,
+                  height: 74,
+                  decoration: const BoxDecoration(shape: BoxShape.circle, gradient: AyahColors.goldVertical),
+                  child: const Icon(Icons.check_rounded, size: 44, color: AyahColors.ink),
+                ),
+                const SizedBox(height: 14),
+                Text(s.label, textAlign: TextAlign.center, style: tt.titleLarge),
+                const SizedBox(height: 6),
+                Text(
+                    '${s.width}×${s.height} • ${s.fileSizeBytes != null ? formatBytes(s.fileSizeBytes!) : ''}'
+                    ' • خلص بـ ${((s.elapsedMs ?? 0) / 1000).toStringAsFixed(0)} ثانية',
+                    textAlign: TextAlign.center,
+                    style: tt.bodySmall),
+                Text(s.savedToGallery ? 'محفوظ بالمعرض ✓' : 'لسا مش محفوظ بالمعرض.',
+                    style: tt.bodySmall?.copyWith(color: p.accentText)),
+                const SizedBox(height: 18),
+                GoldButton(
+                  onPressed: () => _call(VideoExporter.share, 'ما انفتحت المشاركة'),
+                  icon: Icons.share_rounded,
+                  label: 'مشاركة',
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: GoldOutlineButton(
+                        onPressed: () => _call(VideoExporter.open, 'ما في تطبيق يفتح الفيديو'),
+                        icon: Icons.play_circle_outline_rounded,
+                        label: 'فتح',
+                      ),
+                    ),
+                    if (!s.savedToGallery) ...[
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: GoldOutlineButton(
+                          onPressed: () => _call(() async {
+                            await VideoExporter.requestStoragePermission();
+                            await VideoExporter.saveToGallery();
+                          }, 'ما انحفظ'),
+                          icon: Icons.save_alt_rounded,
+                          label: 'حفظ بالمعرض',
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
         if (s.phase != ExportPhase.idle && !s.phase.isRunning) ...[
-          const SizedBox(height: 20),
-          TextButton.icon(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: _report()));
-              ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('انتسخ تقرير التصدير')));
-            },
-            icon: const Icon(Icons.copy, size: 18),
-            label: const Text('نسخ تقرير التصدير'),
+          const SizedBox(height: 14),
+          Center(
+            child: TextButton.icon(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: _report()));
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('انتسخ تقرير التصدير')));
+              },
+              icon: const Icon(Icons.copy_rounded, size: 18),
+              label: const Text('نسخ تقرير التصدير'),
+            ),
           ),
         ],
       ],

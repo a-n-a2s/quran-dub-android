@@ -33,8 +33,20 @@ flutter:
   uses-material-design: true
   assets:
     - assets/quran/quran_data.json.gz
+    - assets/branding/
   # خطوط الآية والتفسير (يوم 7) — الرخص بـ assets/fonts/LICENSES.md
   fonts:
+    # خط الواجهة (الهوية الجديدة 2026-11-28) — IBM Plex Sans Arabic، OFL.
+    - family: Plex Arabic
+      fonts:
+        - asset: assets/fonts/ui/IBMPlexSansArabic-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/ui/IBMPlexSansArabic-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/ui/IBMPlexSansArabic-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/ui/IBMPlexSansArabic-Bold.ttf
+          weight: 700
     - family: KFGQPC Hafs
       fonts:
         - asset: assets/fonts/KFGQPC_HafsUthmanic_v18.ttf

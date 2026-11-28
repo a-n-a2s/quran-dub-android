@@ -4,10 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../asr/file_downloader.dart';
+import '../data/quran_database.dart';
+import '../editor/waveform.dart';
 import '../pipeline/project_input.dart';
 import '../pipeline/recitation_pipeline.dart';
 import '../pipeline/recitation_segment.dart';
 import '../platform/media_picker.dart';
+import '../projects/recent_projects.dart';
+import '../ui/app_settings.dart';
+import '../ui/app_theme.dart';
+import '../ui/ayah_widgets.dart';
 import 'overlay_editor_screen.dart';
 
 enum _AnalysisState { validating, analyzing, done, error }
@@ -96,6 +102,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
         _result = result;
         _state = _AnalysisState.done;
       });
+      _rememberProject(result);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -124,110 +131,244 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     await _validateAndRun();
   }
 
+  /// المشروع بيتسجّل بـ "مشاريع القرآن الأخيرة" مع نتيجة التحليل (عشان يرجع
+  /// يفتح المحرر بدون تحليل جديد) وموجة مصغّرة للبطاقة.
+  Future<void> _rememberProject(PipelineResult r) async {
+    try {
+      Map<int, String> names = const {};
+      try {
+        final all = await QuranDatabase.instance.allSurahs();
+        names = {for (final s in all) s.number: s.nameArabic};
+      } catch (_) {}
+      final d = describeProject(r.segments, (n) => names[n]);
+      List<double> wave = const [];
+      try {
+        final peaks = await extractPeaksFromWavFile(r.wavPath);
+        wave = downsampleWave(peaks.peaks);
+      } catch (_) {}
+      final v = _input.videoInfo;
+      final store = await AppSettings.projects();
+      await store.upsert(
+        RecentProject(
+          id: recentProjectId(_input.videoPath),
+          videoPath: _input.videoPath,
+          externalAudioPath: _input.externalAudioPath,
+          useExternalAudio: _input.useExternalAudio,
+          title: d.title,
+          subtitle: d.subtitle,
+          ayahCount: d.ayahs,
+          durationSeconds: v.durationSeconds,
+          width: v.width,
+          height: v.height,
+          rotation: v.rotationDegrees,
+          fps: v.fps,
+          hasAudioTrack: v.hasAudioTrack,
+          updatedAt: DateTime.now(),
+          wave: wave,
+        ),
+        analysis: r.segments,
+      );
+      AppSettings.projectsChanged();
+    } catch (_) {
+      // القائمة مش ضرورية للتحليل نفسه.
+    }
+  }
+
+  void _openEditor() {
+    final r = _result;
+    if (r == null) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => OverlayEditorScreen(
+        input: _input,
+        segments: r.segments,
+        wavPath: r.wavPath,
+      ),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
+    final p = AyahPalette.of(context);
+    final busy = _state == _AnalysisState.analyzing || _state == _AnalysisState.validating;
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(title: const Text('تحليل المقطع')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _VideoInfoCard(input: _input),
-            const SizedBox(height: 16),
-            if (_input.hasExternalAudio)
-              SwitchListTile(
-                title: const Text('التعرف على ملف التلاوة المنفصل'),
-                subtitle: Text(_input.externalAudioPath!.split('/').last),
-                value: _input.useExternalAudio,
-                onChanged: (v) {
-                  setState(() => _input = _input.withUseExternalAudio(v));
-                  _validateAndRun();
-                },
+      body: AyahBackground(
+        child: SafeArea(
+          child: ListView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 32),
+            children: [
+              _VideoInfoCard(input: _input),
+              const SizedBox(height: 12),
+              GlassCard(
+                padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+                child: Row(
+                  children: [
+                    Icon(Icons.graphic_eq_rounded, color: p.accentText),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_input.hasExternalAudio ? 'ملف تلاوة منفصل' : 'صوت التلاوة',
+                              style: Theme.of(context).textTheme.titleSmall),
+                          Text(
+                            _input.hasExternalAudio
+                                ? _input.externalAudioPath!.split('/').last
+                                : 'من صوت الفيديو نفسه (أو أضف ملف منفصل)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_input.hasExternalAudio)
+                      Switch(
+                        value: _input.useExternalAudio,
+                        onChanged: busy
+                            ? null
+                            : (v) {
+                                setState(() => _input = _input.withUseExternalAudio(v));
+                                _validateAndRun();
+                              },
+                      ),
+                    IconButton(
+                      tooltip: _input.hasExternalAudio ? 'تغيير الملف' : 'إضافة ملف تلاوة',
+                      onPressed: busy ? null : _pickExternalAudio,
+                      icon: Icon(_input.hasExternalAudio ? Icons.swap_horiz_rounded : Icons.add_rounded),
+                    ),
+                  ],
+                ),
               ),
-            OutlinedButton.icon(
-              onPressed:
-                  _state == _AnalysisState.analyzing ? null : _pickExternalAudio,
-              icon: const Icon(Icons.audiotrack),
-              label: Text(_input.hasExternalAudio
-                  ? 'تغيير ملف التلاوة المنفصل'
-                  : 'إضافة ملف تلاوة منفصل (اختياري)'),
-            ),
-            const SizedBox(height: 16),
-            _buildBody(),
-          ],
+              const SizedBox(height: 16),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                child: KeyedSubtree(key: ValueKey(_state), child: _buildBody()),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildBody() {
+    final p = AyahPalette.of(context);
+    final tt = Theme.of(context).textTheme;
     switch (_state) {
       case _AnalysisState.validating:
-        return const Center(child: CircularProgressIndicator());
       case _AnalysisState.analyzing:
-        return Column(
-          children: [
-            LinearProgressIndicator(value: _progress),
-            const SizedBox(height: 8),
-            Text(_progress == null
-                ? '$_stageLabel...'
-                : '$_stageLabel ${(_progress! * 100).round()}%'),
-          ],
+        final pct = _progress == null ? null : (_progress! * 100).round();
+        return GlassCard(
+          padding: const EdgeInsets.fromLTRB(22, 34, 22, 26),
+          child: Column(
+            children: [
+              const GoldLoader(size: 96),
+              const SizedBox(height: 22),
+              Text(_stageLabel.isEmpty ? 'عم نجهّز…' : _stageLabel,
+                  textAlign: TextAlign.center, style: tt.titleMedium),
+              const SizedBox(height: 6),
+              Text(pct == null ? 'لحظات…' : '$pct٪',
+                  style: TextStyle(
+                      fontFamily: kUiFont, fontSize: 28, fontWeight: FontWeight.w700, color: p.accentText)),
+              const SizedBox(height: 14),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: LinearProgressIndicator(value: _progress, minHeight: 8),
+              ),
+              const SizedBox(height: 16),
+              Text('التعرف بيصير على جوالك نفسه، بدون ما يطلع الصوت لأي سيرفر.',
+                  textAlign: TextAlign.center, style: tt.bodySmall),
+            ],
+          ),
         );
       case _AnalysisState.error:
-        return Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-              color: Colors.red.shade50, borderRadius: BorderRadius.circular(8)),
+        return GlassCard(
+          borderColor: AyahColors.danger.withValues(alpha: 0.7),
+          padding: const EdgeInsets.all(22),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(_errorMessage ?? 'خطأ غير معروف'),
-              const SizedBox(height: 8),
-              OutlinedButton(
-                  onPressed: _validateAndRun, child: const Text('إعادة المحاولة')),
+              const Icon(Icons.error_outline_rounded, size: 54, color: AyahColors.danger),
+              const SizedBox(height: 12),
+              Text(_errorMessage ?? 'خطأ غير معروف',
+                  textAlign: TextAlign.center, style: tt.bodyLarge),
+              const SizedBox(height: 18),
+              GoldButton(label: 'جرّب كمان مرة', icon: Icons.refresh_rounded, onPressed: _validateAndRun),
             ],
           ),
         );
       case _AnalysisState.done:
         final r = _result!;
+        final refs = r.ayahRefs;
         return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('الآيات: ${r.ayahRefs.join('، ')}',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            // يوم 9: المحرر (معاينة + سحب العناصر + تخصيص + قوالب). من يوم 7: النص المتزامن (نمط التفسير وخط الآية
-            // بتتبدّل جوا شاشة المعاينة).
-            FilledButton.icon(
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => OverlayEditorScreen(
-                  input: _input,
-                  segments: r.segments,
-                  wavPath: r.wavPath,
+            GlassCard(
+              highlight: true,
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+              child: Column(
+                children: [
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: const BoxDecoration(
+                        shape: BoxShape.circle, gradient: AyahColors.goldVertical),
+                    child: const Icon(Icons.check_rounded, size: 38, color: AyahColors.ink),
+                  ),
+                  const SizedBox(height: 14),
+                  Text('لقينا ${toArabicDigits('${refs.length}')} آية',
+                      style: tt.headlineSmall),
+                  const SizedBox(height: 4),
+                  Text('بتقدر تعدّل أي شي بالمحرر: التوقيت، الآية، الشكل.',
+                      textAlign: TextAlign.center, style: tt.bodySmall),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final ref in refs.take(24)) AyahTag(toArabicDigits(ref)),
+                      if (refs.length > 24) AyahTag('+${toArabicDigits('${refs.length - 24}')}', gold: false),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
+                  GoldButton(
+                    label: 'افتح المحرر',
+                    icon: Icons.movie_creation_rounded,
+                    onPressed: _openEditor,
+                  ),
+                  const SizedBox(height: 10),
+                  // يوم 7: تقرير كامل (كل المقاطع حتى المخفية + ناتج التعرف الخام).
+                  TextButton.icon(
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: analysisReport(_input, r)));
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('انتسخ التقرير. الصقه بالمحادثة.')));
+                    },
+                    icon: const Icon(Icons.copy_rounded, size: 18),
+                    label: const Text('نسخ تقرير التحليل'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: GlassCard(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: ExpansionTile(
+                  iconColor: p.accentText,
+                  collapsedIconColor: p.textMuted,
+                  title: Text('تفاصيل المقاطع (${toArabicDigits('${r.segments.length}')})',
+                      style: tt.titleSmall),
+                  childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
+                  children: [for (final s in r.segments) _SegmentTile(segment: s)],
                 ),
-              )),
-              icon: const Icon(Icons.play_circle_outline),
-              label: const Text('معاينة النص فوق الفيديو'),
+              ),
             ),
-            const SizedBox(height: 8),
-            // يوم 7: تقرير كامل (كل المقاطع حتى المخفية + ناتج التعرف الخام)
-            // عشان أنس يبعته لما آية أو كلمة تنقص، ونعرف السبب بالضبط.
-            OutlinedButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(
-                    ClipboardData(text: analysisReport(_input, r)));
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text('انتسخ التقرير. الصقه بالمحادثة.')));
-              },
-              icon: const Icon(Icons.copy),
-              label: const Text('نسخ تقرير التحليل'),
-            ),
-            const SizedBox(height: 12),
-            // كل المقاطع (المخفية باهتة: استعاذة، أو مش قرآن مع نص التعرف).
-            for (final s in r.segments) _SegmentTile(segment: s),
           ],
         );
     }
@@ -240,41 +381,65 @@ class _VideoInfoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final p = AyahPalette.of(context);
     final v = input.videoInfo;
     final orientationLabel = switch (v.orientation) {
       VideoOrientation.portrait => 'عمودي',
       VideoOrientation.landscape => 'أفقي',
       VideoOrientation.square => 'مربع',
     };
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(input.source == VideoSource.camera
-                    ? Icons.videocam
-                    : Icons.photo_library),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(input.videoPath.split('/').last,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                      overflow: TextOverflow.ellipsis),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '${v.rotatedWidth}×${v.rotatedHeight} ($orientationLabel) • '
-              '${v.durationSeconds.toStringAsFixed(1)} ثانية'
-              '${v.fps > 0 ? ' • ${v.fps.toStringAsFixed(0)}fps' : ''} • '
-              '${v.hasAudioTrack ? 'فيه صوت' : 'بدون صوت'}',
-              style: const TextStyle(color: Colors.black54, fontSize: 13),
-            ),
-          ],
-        ),
+    Widget chip(IconData i, String t) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: AyahColors.gold.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(i, size: 14, color: p.accentText),
+            const SizedBox(width: 5),
+            Text(t, style: TextStyle(fontFamily: kUiFont, fontSize: 12, color: p.text)),
+          ]),
+        );
+    return GlassCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: const BoxDecoration(
+                    shape: BoxShape.circle, gradient: AyahColors.goldVertical),
+                child: Icon(
+                    input.source == VideoSource.camera
+                        ? Icons.videocam_rounded
+                        : Icons.movie_rounded,
+                    color: AyahColors.ink),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(input.videoPath.split('/').last,
+                    style: Theme.of(context).textTheme.titleSmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              chip(Icons.aspect_ratio_rounded, '${v.rotatedWidth}×${v.rotatedHeight} • $orientationLabel'),
+              chip(Icons.timer_outlined, '${v.durationSeconds.toStringAsFixed(1)} ث'),
+              if (v.fps > 0) chip(Icons.speed_rounded, '${v.fps.toStringAsFixed(0)}fps'),
+              chip(v.hasAudioTrack ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+                  v.hasAudioTrack ? 'فيه صوت' : 'بدون صوت'),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -314,45 +479,39 @@ class _SegmentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!segment.isVisible) {
-      return Card(
-        color: Colors.grey.shade100,
-        margin: const EdgeInsets.only(bottom: 8),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(segment.describe(),
-                  style: const TextStyle(fontSize: 12, color: Colors.black45)),
-              if (segment.asrText.isNotEmpty)
-                Text('التعرف: ${segment.asrText}',
-                    style: const TextStyle(fontSize: 12, color: Colors.black45),
-                    textDirection: TextDirection.rtl),
-            ],
-          ),
-        ),
-      );
-    }
-    return Card(
+    final p = AyahPalette.of(context);
+    final hidden = !segment.isVisible;
+    return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: p.dark ? const Color(0x12FFFFFF) : const Color(0x0D000000),
+        border: Border.all(
+            color: segment.needsReview
+                ? AyahColors.review.withValues(alpha: 0.7)
+                : p.cardBorder.withValues(alpha: 0.25)),
+      ),
+      child: Opacity(
+        opacity: hidden ? 0.5 : 1,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(segment.describe(),
-                style: const TextStyle(fontSize: 12, color: Colors.black54)),
-            if (segment.text.isNotEmpty) ...[
+            Text(segment.describe(), style: Theme.of(context).textTheme.bodySmall),
+            if (!hidden && segment.text.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(segment.text,
-                  style: const TextStyle(fontSize: 18), textDirection: TextDirection.rtl),
+                  style: TextStyle(fontFamily: 'Amiri Quran', fontSize: 19, height: 1.9, color: p.text),
+                  textDirection: TextDirection.rtl),
             ],
-            if (segment.tafsir.isNotEmpty) ...[
-              const SizedBox(height: 4),
+            if (!hidden && segment.tafsir.isNotEmpty) ...[
+              const SizedBox(height: 2),
               Text(segment.tafsir,
-                  style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                  style: TextStyle(fontFamily: 'Amiri', fontSize: 14, color: p.textMuted)),
             ],
+            if (hidden && segment.asrText.isNotEmpty)
+              Text('التعرف: ${segment.asrText}',
+                  style: Theme.of(context).textTheme.bodySmall, textDirection: TextDirection.rtl),
           ],
         ),
       ),
