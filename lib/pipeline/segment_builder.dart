@@ -268,7 +268,10 @@ double _timeAt(AsrSegment s, QuranMatch r, int keyIdx, double fallback) {
 /// فأول آية بالمقطع بتبلّش مع المقطع (لو ما في مقدمات)، وآخر آية بتخلص
 /// معه، والحد بين آيتين جوا المقطع = قبل أول حرف من الآية الجاية بشوي.
 Iterable<_AyahItem> _ayahItems(AsrSegment s, QuranMatch r, String asr,
-    {required bool review, QuranTextSource? text}) sync* {
+    {required bool review, QuranTextSource? text}) {
+  final out = <_AyahItem>[];
+  // span ← عدد العناصر اللي طلعت منه بـ out (عشان نشيلها لو طلعت إعادة).
+  final emitted = <int>[];
   final t0s = [for (final a in r.ayahs) _timeAt(s, r, a.queryStart, s.start)];
   final t1s = [for (final a in r.ayahs) _timeAt(s, r, a.queryEnd - 1, s.end)];
   for (var k = 0; k < r.ayahs.length; k++) {
@@ -284,33 +287,68 @@ Iterable<_AyahItem> _ayahItems(AsrSegment s, QuranMatch r, String asr,
     }
     // إعادة جوا نفس المقطع (طلب أنس 2026-11-28): "يعلم خائنة الأعين" … وقف …
     // "يعلم خائنة الأعين وما تخفي الصدور" → قراءتين، الأولى بس اللي انقرأ.
+    // القراءة الأولى أحياناً المطابقة بتلزّقها بآخر الآية اللي قبل: بنجرّب كمان
+    // نضم الجزء اللي انحسب على الآية السابقة لو كان قصير.
     final content = text?.ayah(a.surah, a.ayah);
     if (content != null) {
+      final ayahKey = ArabicNormalizer.key(content.uthmani);
       final qs = k > 0
           ? r.ayahs[k - 1].queryEnd
           : (r.preambles.isEmpty ? 0 : r.preambles.last.queryEnd);
       final int from = math.max(0, math.min(math.min(qs, a.queryStart), a.queryEnd));
-      final q = r.query.key.substring(from, a.queryEnd);
-      final ayahKey = ArabicNormalizer.key(content.uthmani);
-      final int firstFrom = from < a.queryStart ? 0 : math.max(0, math.min(a.keyStart, ayahKey.length));
-      final rr = detectReread(q, ayahKey, firstFrom: firstFrom);
+      final tries = <(int, bool)>[(from, false)];
+      if (k > 0) {
+        final p = r.ayahs[k - 1];
+        final len = p.queryEnd - p.queryStart;
+        if (len >= 6 && len <= 70 && p.queryStart < from) tries.add((p.queryStart, true));
+      }
+      ({int qSplit, int firstEnd, int secondStart, int firstCost})? rr;
+      var rf = from;
+      var absorb = false;
+      for (final (f, ab) in tries) {
+        final q = r.query.key.substring(f, a.queryEnd);
+        final int firstFrom =
+            (f < a.queryStart || ab) ? 0 : math.max(0, math.min(a.keyStart, ayahKey.length));
+        final x = detectReread(q, ayahKey, firstFrom: firstFrom);
+        if (x == null) continue;
+        if (ab) {
+          final prevLen = a.queryStart - f;
+          // لازم القراءة الأولى تاكل الجزء اللي انحسب عالسابقة، وتكون مطابقة منيح لأول الآية.
+          if (x.qSplit < prevLen - 3 || x.firstCost > (x.qSplit * 0.3).ceil()) continue;
+        }
+        rr = x;
+        rf = f;
+        absorb = ab;
+        break;
+      }
       if (rr != null) {
-        final split = from + rr.qSplit;
-        final tEnd1 = _timeAt(s, r, split - 1, t0);
+        var start = t0;
+        if (absorb) {
+          // شيل عنصر الآية السابقة (كان القراءة الأولى نفسها).
+          final n = emitted.removeLast();
+          final removed = out.sublist(out.length - n);
+          out.removeRange(out.length - n, out.length);
+          start = removed.first.start;
+        }
+        final split = rf + rr.qSplit;
+        final tEnd1 = _timeAt(s, r, split - 1, start);
         final tMid = _timeAt(s, r, split, tEnd1);
-        final mid = math.max(t0, math.min(t1, (tEnd1 + tMid) / 2));
-        yield _AyahItem(a.surah, a.ayah, firstFrom, rr.firstEnd, t0, mid,
-            r.confidence, review, asr);
-        yield _AyahItem(a.surah, a.ayah, rr.secondStart, a.keyEnd, mid,
+        final mid = math.max(start, math.min(t1, (tEnd1 + tMid) / 2));
+        out.add(_AyahItem(a.surah, a.ayah, absorb || rf < a.queryStart ? 0 : a.keyStart,
+            rr.firstEnd, start, mid, r.confidence, review, asr));
+        out.add(_AyahItem(a.surah, a.ayah, rr.secondStart, a.keyEnd, mid,
             t1 < mid ? mid : t1, r.confidence, review, asr,
-            rawEnd: k == r.ayahs.length - 1 ? null : math.max(mid, t1s[k]));
+            rawEnd: k == r.ayahs.length - 1 ? null : math.max(mid, t1s[k])));
+        emitted.add(2);
         continue;
       }
     }
-    yield _AyahItem(a.surah, a.ayah, a.keyStart, a.keyEnd, t0,
+    out.add(_AyahItem(a.surah, a.ayah, a.keyStart, a.keyEnd, t0,
         t1 < t0 ? t0 : t1, r.confidence, review, asr,
-        rawEnd: k == r.ayahs.length - 1 ? null : math.max(t0, t1s[k]));
+        rawEnd: k == r.ayahs.length - 1 ? null : math.max(t0, t1s[k])));
+    emitted.add(1);
   }
+  return out;
 }
 
 /// مقطع ضعيف ([_Weak]) محصور بين آيتين انطابقوا (ممكن مع مقاطع غير قرآنية
@@ -783,7 +821,7 @@ int? _bestPrefix(String k, String ayahKey) {
 /// وبتوقف، وتانية بتخلص بآخر الآية)؛ لو التنتين أرخص بوضوح والثانية بتبلّش
 /// قبل ما الأولى توقف (رجوع لورا) → (موقع القطع بـ q، آخر الأولى بـ K، أول
 /// التانية بـ K). صافية ومختبرة.
-({int qSplit, int firstEnd, int secondStart})? detectReread(String q, String K,
+({int qSplit, int firstEnd, int secondStart, int firstCost})? detectReread(String q, String K,
     {int firstFrom = 0, int minPart = 6}) {
   final n = q.length, m = K.length;
   if (n < 2 * minPart || m < minPart) return null;
@@ -861,7 +899,7 @@ int? _bestPrefix(String k, String ayahKey) {
     c2 = t;
   }
 
-  ({int qSplit, int firstEnd, int secondStart})? best;
+  ({int qSplit, int firstEnd, int secondStart, int firstCost})? best;
   var bestCost = 1 << 30;
   for (var i = minPart; i <= n - minPart; i++) {
     final e1 = pEnd[i], s2 = sStart[i];
@@ -872,7 +910,7 @@ int? _bestPrefix(String k, String ayahKey) {
     if (gain < 5 || gain < overlap * 0.5) continue;
     if (cost < bestCost) {
       bestCost = cost;
-      best = (qSplit: i, firstEnd: e1, secondStart: s2);
+      best = (qSplit: i, firstEnd: e1, secondStart: s2, firstCost: pCost[i]);
     }
   }
   return best;
