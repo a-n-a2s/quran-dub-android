@@ -713,7 +713,59 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   /// المحدد، والإصبعين بيكبّروه/بيصغّروه، بدون ما تلمس العنصر نفسه.
   void _onTapUp(TapUpDetails d) {
     final p = _toVideo(d.globalPosition);
-    setState(() => _selected = p == null ? null : _hit(p));
+    final hit = p == null ? null : _hit(p);
+    setState(() {
+      _selected = hit;
+      // (طلب أنس 2026-11-28) كبسة على نص آية بالمعاينة = تحديد هالآية كمان، فالسحب
+      // والتكبير بيغيّروا مكانها هي بس (إلا لو اختار "كل الآيات").
+      final cur = _cue.value?.item.index;
+      if (hit != null && cur != null && cur != _selectedSegment) {
+        _selectedSegment = cur;
+        _applyToAll = false;
+      }
+    });
+  }
+
+  /// شريط صغير فوق المعاينة لما يكون عنصر محدد: التحريك لهالآية بس أو للكل.
+  Widget _previewScopeBar() {
+    final sel = _selectedSegment;
+    if (_selected == null || sel == null || sel >= _segments.length) {
+      return const SizedBox.shrink();
+    }
+    final own = _style.segmentStyles.containsKey(sel);
+    Widget chip(String label, bool on, VoidCallback tap) => GestureDetector(
+          onTap: () {
+            HapticFeedback.selectionClick();
+            tap();
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: on ? _gold : const Color(0xCC0A1F17),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _gold.withValues(alpha: 0.7)),
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    fontFamily: kUiFont,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: on ? AyahColors.ink : Colors.white)),
+          ),
+        );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        chip('هالآية بس', !_applyToAll, () => setState(() => _applyToAll = false)),
+        const SizedBox(width: 6),
+        chip('كل الآيات', _applyToAll, () => setState(() => _applyToAll = true)),
+        if (own && !_applyToAll) ...[
+          const SizedBox(width: 6),
+          chip('رجّعها للعام', false, _resetAyahStyle),
+        ],
+      ],
+    );
   }
 
   List<OverlayElement> get _sizable => [
@@ -1168,7 +1220,10 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
         _topBar(),
         // ------------------------------ المعاينة ------------------------------
         Expanded(
-          child: GestureDetector(
+          child: Stack(
+           children: [
+            Positioned.fill(
+            child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapUp: _onTapUp,
             onScaleStart: (d) {
@@ -1217,6 +1272,15 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                 ),
               ),
             ),
+          ),
+            ),
+            Positioned(
+              top: 10,
+              left: 0,
+              right: 0,
+              child: Center(child: _previewScopeBar()),
+            ),
+           ],
           ),
         ),
         _controlsRow(),
