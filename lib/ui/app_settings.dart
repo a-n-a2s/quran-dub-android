@@ -43,6 +43,10 @@ class AppSettings {
 
   static RecentProjectsStore? _store;
 
+  /// للاختبارات (لقطات الشاشات): مخزن بمجلد مؤقت بدل path_provider.
+  @visibleForTesting
+  static set storeForTest(RecentProjectsStore? s) => _store = s;
+
   static Future<RecentProjectsStore> projects() async {
     final s = _store;
     if (s != null) return s;

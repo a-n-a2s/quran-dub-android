@@ -471,8 +471,13 @@ class _RecentListState extends State<_RecentList> {
   }
 
   Future<void> _load() async {
-    final store = await AppSettings.projects();
-    final all = await store.list();
+    List<RecentProject> all;
+    try {
+      final store = await AppSettings.projects();
+      all = await store.list();
+    } catch (_) {
+      all = const [];
+    }
     if (mounted) setState(() => _items = all);
   }
 

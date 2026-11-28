@@ -40,9 +40,17 @@ jobs:
         run: flutter analyze || true
 
       - name: Tests (QuranMatcher + WAV/ASR helpers + pipeline + overlay + export)
-        run: flutter test test/matching test/asr test/pipeline test/overlay test/export test/editor test/projects
+        run: flutter test test/matching test/asr test/pipeline test/overlay test/export test/editor test/projects test/ui
 
       # بس معالجات الجوالات الحقيقية (arm64 + arm 32-bit)، بدون x86_64 (محاكي).
+      - name: رفع لقطات الواجهة (للمراجعة)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-preview-${{ github.run_number }}
+          path: build/ui_preview/
+          if-no-files-found: ignore
+
       - name: Build debug APK
         run: flutter build apk --debug --target-platform android-arm,android-arm64
 
