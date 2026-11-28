@@ -6,13 +6,17 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../overlay/overlay_layout.dart';
+import '../overlay/overlay_style.dart';
 import '../pipeline/recitation_segment.dart';
 
 /// تعديلات مشروع محفوظة: المقاطع وأحجام كل مقطع.
 class ProjectEdits {
   final List<RecitationSegment> segments;
   final Map<int, Map<OverlayElement, double>> segmentScales;
-  const ProjectEdits(this.segments, this.segmentScales);
+
+  /// الشكل الخاص بكل آية (`OverlayStyle.segmentStyles`).
+  final Map<int, OverlayStyle> segmentStyles;
+  const ProjectEdits(this.segments, this.segmentScales, [this.segmentStyles = const {}]);
 }
 
 /// تعديلات مشروع واحد: قائمة المقاطع بعد كل التصحيحات اليدوية (تغيير آية،
@@ -57,14 +61,25 @@ class ProjectEditStore {
           if (m.isNotEmpty) scales[idx] = m;
         });
       }
-      return ProjectEdits(out, scales);
+      final styles = <int, OverlayStyle>{};
+      final rawStyles = j['segmentStyles'];
+      if (rawStyles is Map) {
+        rawStyles.forEach((k, v) {
+          final idx = int.tryParse('$k');
+          if (idx == null || idx < 0 || idx >= out.length || v is! Map) return;
+          styles[idx] = OverlayStyle.fromJson(v);
+        });
+      }
+      return ProjectEdits(out, scales, styles);
     } catch (_) {
       return null;
     }
   }
 
   Future<void> save(List<RecitationSegment> segments,
-      {String? base, Map<int, Map<OverlayElement, double>> segmentScales = const {}}) async {
+      {String? base,
+      Map<int, Map<OverlayElement, double>> segmentScales = const {},
+      Map<int, OverlayStyle> segmentStyles = const {}}) async {
     final tmp = File('${file.path}.tmp');
     await file.parent.create(recursive: true);
     await tmp.writeAsString(
@@ -78,6 +93,10 @@ class ProjectEditStore {
               for (final e in segmentScales[k]!.keys) e.name: segmentScales[k]![e]
             }
         },
+        if (segmentStyles.isNotEmpty)
+          'segmentStyles': {
+            for (final k in segmentStyles.keys) '$k': segmentStyles[k]!.toJson(forTemplate: true)
+          },
       }),
       flush: true,
     );

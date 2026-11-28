@@ -6,6 +6,8 @@
 // (مكان كل مقطع قديم بالقائمة الجديدة) عشان المتصل يعيد ربط
 // `OverlayStyle.segmentScales` بـ [remapSegmentScales] — المفاتيح هناك
 // index بالقائمة.
+import 'dart:math' as math;
+
 import '../pipeline/quran_text_source.dart';
 import '../pipeline/recitation_segment.dart';
 import '../pipeline/segment_builder.dart';
@@ -26,6 +28,9 @@ class SegmentEdit {
 
   SegmentScaleMap remapScales(SegmentScaleMap old) =>
       remapSegmentScales(old, mapping);
+
+  /// إعادة ربط الشكل الخاص بكل آية (نفس المفاتيح).
+  Map<int, T> remapMap<T>(Map<int, T> old) => remapIndexMap(old, mapping);
 }
 
 List<int?> _identity(int n) => [for (var i = 0; i < n; i++) i];
@@ -214,4 +219,54 @@ String segmentsSignature(List<RecitationSegment> segs) {
         '${s.kind.name}|${s.ref}|${s.part}/${s.partCount};');
   }
   return '${segs.length}-${h.toRadixString(16)}';
+}
+
+/// حدود التقسيم الحالية لآية المقطع [index] (عدد الكلمات قبل كل حد)، من نصوص
+/// أجزاء نفس التلاوة. آية بجزء واحد = فاضية.
+List<int> wordCutsAt(List<RecitationSegment> segs, int index) {
+  final (from, to) = readingGroupAt(segs, index);
+  final cuts = <int>[];
+  var acc = 0;
+  for (var i = from; i < to; i++) {
+    acc += RegExp(r'\S+').allMatches(segs[i].text).length;
+    cuts.add(acc);
+  }
+  return cuts;
+}
+
+/// تقسيم آية المقطع [index] يدوياً على حدود كلمات (طلب أنس 2026-11-28)، أو
+/// رجعها **آية كاملة** بجزء واحد ([cuts] فاضية). كل أجزاء نفس التلاوة بتنبني من
+/// جديد على نفس الوقت الكلي: لو عدد الأجزاء ما تغيّر بتضل أوقاتها، وإلا بتتوزّع
+/// بنسبة طول كل جزء (والمستخدم بيظبطها بالمقابض). مقطع مش آية = بدون تغيير.
+SegmentEdit splitAyahAtWords(QuranTextSource text, List<RecitationSegment> segs,
+    int index, List<int> cuts) {
+  final s = segs[index];
+  if (!s.isAyah || s.surah == null || s.ayah == null) {
+    return SegmentEdit(segs, _identity(segs.length), focus: index);
+  }
+  final (from, to) = readingGroupAt(segs, index);
+  final oldCount = to - from + 1;
+  final rebuilt = buildAyahReadingAtWords(
+    text,
+    s.surah!,
+    s.ayah!,
+    cuts,
+    start: segs[from].start,
+    end: segs[to].end,
+    partTimes: [for (var i = from; i <= to; i++) (segs[i].start, segs[i].end)],
+    confidence: s.confidence,
+  );
+  if (rebuilt.isEmpty) return SegmentEdit(segs, _identity(segs.length), focus: index);
+  final out = [...segs]..replaceRange(from, to + 1, rebuilt);
+  final delta = rebuilt.length - oldCount;
+  final mapping = <int?>[
+    for (var i = 0; i < segs.length; i++)
+      i < from
+          ? i
+          : i > to
+              ? i + delta
+              : from + math.min(i - from, rebuilt.length - 1),
+  ];
+  return SegmentEdit(out, mapping,
+      focus: from + math.min(index - from, rebuilt.length - 1));
 }

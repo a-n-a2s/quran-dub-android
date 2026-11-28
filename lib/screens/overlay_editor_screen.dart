@@ -29,6 +29,7 @@ import '../pipeline/project_input.dart';
 import '../pipeline/quran_text_source.dart';
 import '../pipeline/recitation_pipeline.dart';
 import '../pipeline/recitation_segment.dart';
+import '../pipeline/segment_builder.dart' show ayahWords;
 import '../pipeline/segment_factory.dart';
 import '../platform/video_info.dart';
 import 'export_screen.dart';
@@ -60,7 +61,8 @@ enum _Tool {
   fonts('الخطوط والأحجام', Icons.text_fields_rounded),
   colors('الألوان والظل', Icons.palette_rounded),
   templates('القوالب', Icons.auto_awesome_mosaic_rounded),
-  details('تفاصيل الآية', Icons.tune_rounded);
+  details('تفاصيل الآية', Icons.tune_rounded),
+  split('تقسيم الآية', Icons.call_split_rounded);
 
   final String label;
   final IconData icon;
@@ -137,6 +139,16 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   DateTime _lastStyleEdit = DateTime.fromMillisecondsSinceEpoch(0);
 
   List<ui.Image?> _thumbs = const [];
+
+  /// مع آية محددة: true = الأدوات على كل الآيات (العام)، false = هالآية بس.
+  bool _applyToAll = false;
+
+  /// كلمات الآية المحددة (لأداة التقسيم).
+  List<String> _splitWords = const [];
+
+  Timer? _seekTimer;
+  DateTime _lastNativeSeek = DateTime.fromMillisecondsSinceEpoch(0);
+  double? _seekTarget;
   _Tool? _tool;
   final GlobalKey<EditorTimelineState> _timelineKey = GlobalKey<EditorTimelineState>();
 
@@ -264,7 +276,8 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
       if (saved != null && saved.segments.isNotEmpty && mounted) {
         setState(() {
           _segments = saved.segments;
-          _style = _style.copyWith(segmentScales: saved.segmentScales);
+          _style = _style.copyWith(
+              segmentScales: saved.segmentScales, segmentStyles: saved.segmentStyles);
           _hasEdits = true;
           _rebuildTimeline();
         });
@@ -283,7 +296,9 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
       if (store == null) return;
       store
           .save(_segments,
-              base: _baseSignature, segmentScales: _style.segmentScales)
+              base: _baseSignature,
+              segmentScales: _style.segmentScales,
+              segmentStyles: _style.segmentStyles)
           .catchError((_) {});
     }
 
@@ -374,17 +389,20 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
 
   void _onPlayerUpdate() {
     final v = _master!.value;
-    _clock.report(
-      position: v.position.inMicroseconds / 1e6,
-      wall: _wallSeconds,
-      playing: v.isPlaying,
-    );
+    // بس أيقونة التشغيل (بدل setState للشاشة كلها مع كل تبليغ من المشغّل).
+    _playing.value = v.isPlaying;
     // انتهى: وقّف وانتظر "تشغيل" ليرجع من البداية.
     if (v.isCompleted && _video!.value.isPlaying) {
       _video!.pause();
     }
-    // بس أيقونة التشغيل (بدل setState للشاشة كلها مع كل تبليغ من المشغّل).
-    _playing.value = v.isPlaying;
+    // seek لسا معلّق: موقع المشغّل قديم، ما نصدّقه.
+    if (_seekTimer != null || _seekTarget != null) return;
+    // وقت التحميل (buffering) الصورة واقفة: الساعة ما لازم تمشي لحالها.
+    _clock.report(
+      position: v.position.inMicroseconds / 1e6,
+      wall: _wallSeconds,
+      playing: v.isPlaying && !v.isBuffering,
+    );
   }
 
   Future<void> _togglePlay() async {
@@ -394,45 +412,54 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
       await Future.wait([for (final c in all) c.pause()]);
     } else {
       final dur = m.value.duration;
-      if (m.value.position >= dur - const Duration(milliseconds: 100)) {
-        await _seek(Duration.zero);
+      if (m.value.position >= dur - const Duration(milliseconds: 100) ||
+          _time.value >= _duration - 0.1) {
+        await _seekTo(0, now: true);
+      } else if (_seekTimer != null ||
+          _seekTarget != null ||
+          (m.value.position.inMicroseconds / 1e6 - _time.value).abs() > 0.25) {
+        // بعد سحب: المشغّل لازم يكون بنفس مكان الخط قبل ما يبلّش.
+        await _seekTo(_time.value, now: true);
       }
       await Future.wait([for (final c in all) c.play()]);
     }
   }
 
-  Future<void> _seek(Duration to) => _seekTo(to.inMicroseconds / 1e6);
+  Future<void> _seek(Duration to) => _seekTo(to.inMicroseconds / 1e6, now: true);
 
-  /// seek مضبوط: النص والخط الزمني بيتحدّثوا فوراً، والمشغّل بياخد آخر موقع
-  /// مطلوب بس (seek واحد بالمرة)، فالسحب السريع ما بيعمل طابور بيعلّق.
-  Future<void> _seekTo(double seconds) async {
+  /// seek مضبوط: النص والخط الزمني بيتحدّثوا فوراً، والمشغّل بياخد **آخر** موقع
+  /// مطلوب بس، وبحد أقصى seek كل 150ms (وقت السحب). `seekTo` تبع video_player
+  /// بيرجع قبل ما ExoPlayer يخلّص، فطابور seeks سريع كان بيعلّق الصورة لثواني
+  /// بعد "تشغيل" (بلاغ أنس 2026-11-28: الخط بيمشي والفيديو واقف).
+  Future<void> _seekTo(double seconds, {bool now = false}) async {
     final t = seconds.clamp(0.0, _duration).toDouble();
     _time.value = t;
     _updateCue();
     if (_video == null) return;
-    if (_seekBusy) {
-      _seekPending = t;
+    _seekTarget = t;
+    final since = DateTime.now().difference(_lastNativeSeek).inMilliseconds;
+    if (!now && since < 150) {
+      _seekTimer ??= Timer(Duration(milliseconds: 150 - since), _flushSeek);
       return;
     }
-    _seekBusy = true;
-    var target = t;
+    await _flushSeek();
+  }
+
+  Future<void> _flushSeek() async {
+    _seekTimer?.cancel();
+    _seekTimer = null;
+    final t = _seekTarget;
+    if (t == null || _video == null) return;
+    _seekTarget = null;
+    _lastNativeSeek = DateTime.now();
     try {
-      while (true) {
-        final d = Duration(microseconds: (target * 1e6).round());
-        final all = [_video!, if (_audio != null) _audio!];
-        await Future.wait([for (final c in all) c.seekTo(d)]);
-        final next = _seekPending;
-        _seekPending = null;
-        if (next == null || (next - target).abs() < 0.001) break;
-        target = next;
-      }
+      final d = Duration(microseconds: (t * 1e6).round());
+      await Future.wait([for (final c in [_video!, if (_audio != null) _audio!]) c.seekTo(d)]);
     } catch (_) {
       // المشغّل انسكّر.
-    } finally {
-      _seekBusy = false;
     }
     if (!mounted || _master == null) return;
-    _clock.report(position: target, wall: _wallSeconds, playing: _master!.value.isPlaying);
+    _clock.report(position: t, wall: _wallSeconds, playing: false);
   }
 
   // ------------------------ السحب على الخط الزمني ------------------------
@@ -451,7 +478,8 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
 
   void _onScrubEnd() {
     _scrubbing = false;
-    _clock.report(position: _time.value, wall: _wallSeconds, playing: false);
+    // seek أخير بالمكان بالضبط (بدل ما يضل طلب معلّق).
+    _seekTo(_time.value, now: true);
   }
 
   // --------------------------- تراجع / إعادة ---------------------------
@@ -547,9 +575,12 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     if (_saveTimer?.isActive ?? false) {
       _saveTimer!.cancel();
       _editStore
-          ?.save(_segments, base: _baseSignature, segmentScales: _style.segmentScales)
+          ?.save(_segments, base: _baseSignature,
+              segmentScales: _style.segmentScales,
+              segmentStyles: _style.segmentStyles)
           .catchError((_) {});
     }
+    _seekTimer?.cancel();
     _ticker.dispose();
     _master?.removeListener(_onPlayerUpdate);
     _video?.dispose();
@@ -570,16 +601,67 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   // تعديل الشكل
   // ---------------------------------------------------------------------
 
+  /// الآية اللي التعديلات بتنطبّق عليها لحالها (null = الشكل العام لكل الآيات).
+  /// لما تكون آية محددة، كل الأدوات (وسحب العناصر بالمعاينة) بتشتغل عليها هي
+  /// بس، إلا لو المستخدم اختار "كل الآيات".
+  int? get _scopeSeg {
+    final sel = _selectedSegment;
+    if (sel == null || _applyToAll || sel >= _segments.length) return null;
+    return _segments[sel].isVisible ? sel : null;
+  }
+
+  /// الشكل اللي عم يتعدّل هلأ (العام، أو شكل الآية المحددة).
+  OverlayStyle get _es {
+    final seg = _scopeSeg;
+    return seg == null ? _style : _style.forSegment(seg);
+  }
+
+  /// كل مقاطع نفس الآية (الأجزاء) اللي المقطع [i] منها.
+  List<int> _groupOf(int i) {
+    final (from, to) = readingGroupAt(_segments, i);
+    return [for (var k = from; k <= to; k++) k];
+  }
+
   void _setStyle(OverlayStyle s) {
     // تغييرات متتالية (سلايدر، سحب) = خطوة تراجع وحدة.
     final now = DateTime.now();
     if (now.difference(_lastStyleEdit).inMilliseconds > 700) _checkpoint();
     _lastStyleEdit = now;
-    setState(() => _style = s);
+    final seg = _scopeSeg;
+    if (seg == null) {
+      setState(() => _style = s);
+      return;
+    }
+    // شكل خاص بهالآية (كل أجزائها)، والحجم الخاص القديم بينطوي جواه.
+    final own = s.copyWith(
+        reciterName: '', segmentScales: const {}, segmentStyles: const {});
+    final styles = {..._style.segmentStyles};
+    final scales = {..._style.segmentScales};
+    for (final i in _groupOf(seg)) {
+      styles[i] = own;
+      scales.remove(i);
+    }
+    setState(() => _style = _style.copyWith(segmentStyles: styles, segmentScales: scales));
+    _saveEdits();
+  }
+
+  /// رجّع الآية المحددة للشكل العام.
+  void _resetAyahStyle() {
+    final sel = _selectedSegment;
+    if (sel == null) return;
+    _checkpoint();
+    final styles = {..._style.segmentStyles};
+    final scales = {..._style.segmentScales};
+    for (final i in _groupOf(sel)) {
+      styles.remove(i);
+      scales.remove(i);
+    }
+    setState(() => _style = _style.copyWith(segmentStyles: styles, segmentScales: scales));
+    _saveEdits();
   }
 
   void _setPlacement(OverlayElement e, ElementPlacement Function(ElementPlacement) f) =>
-      _setStyle(_style.copyWith(layout: _style.layout.update(e, f)));
+      _setStyle(_es.copyWith(layout: _es.layout.update(e, f)));
 
   String? _surahLookup(int n) => _surahNames[n];
 
@@ -615,11 +697,11 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     final slop = unit * 0.02;
     // المنسحب فوق الباقي (بينرسم آخر)، وبعدين بترتيب عكسي.
     final order = [
-      ..._style.layout.detached.reversed,
+      ..._es.layout.detached.reversed,
       ...OverlayElement.values.reversed,
     ];
     for (final e in order) {
-      if (!_style.layout.isEnabled(e)) continue;
+      if (!_es.layout.isEnabled(e)) continue;
       final r = _rectOf(e);
       if (r != null && r.inflate(slop).contains(p)) return e;
     }
@@ -636,22 +718,22 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
 
   List<OverlayElement> get _sizable => [
         for (final e in OverlayElement.values)
-          if (_style.layout.isEnabled(e) && e.available) e
+          if (_es.layout.isEnabled(e) && e.available) e
       ];
 
   /// المقطع اللي بيتعدّل حجمه: null = كل المقاطع (الحجم العام)، أو رقم المقطع
   /// الظاهر هلأ لما "كل مقطع لحاله" شغّال. [_noSegment] = لحاله بس ما في مقطع ظاهر.
-  int? get _targetSeg => _perSegment ? _segIdx.value : null;
-  bool get _noSegment => _perSegment && _segIdx.value == null;
+  int? get _targetSeg => _perSegment && _scopeSeg == null ? _segIdx.value : null;
+  bool get _noSegment => _perSegment && _scopeSeg == null && _segIdx.value == null;
 
   double _scaleOf(OverlayElement e, int? seg) =>
-      seg == null ? _style.layout[e].scale : _style.forSegment(seg).layout[e].scale;
+      seg == null ? _es.layout[e].scale : _es.forSegment(seg).layout[e].scale;
 
   void _applyScales(Map<OverlayElement, double> scales, {int? seg}) {
     if (seg == null) {
-      var l = _style.layout;
+      var l = _es.layout;
       scales.forEach((e, v) => l = l.update(e, (p) => p.copyWith(scale: clampScale(v))));
-      _setStyle(_style.copyWith(layout: l));
+      _setStyle(_es.copyWith(layout: l));
       return;
     }
     final mine = {...?_style.segmentScales[seg]};
@@ -692,11 +774,11 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
 
   void _onScaleStart(ScaleStartDetails d) {
     final e = _selected;
-    if (!_can || e == null || !_style.layout.isEnabled(e)) return;
+    if (!_can || e == null || !_es.layout.isEnabled(e)) return;
     final p = _toVideo(d.focalPoint);
     final r = _rectOf(e);
     if (p == null || r == null) return;
-    final a = _style.layout[e].anchor;
+    final a = _es.layout[e].anchor;
     _dragEl = e;
     _dragStart = p;
     _dragSize = r.size;
@@ -714,7 +796,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     final video = Size(_w.toDouble(), _h.toDouble());
     List<Rect> others() => [
           for (final x in OverlayElement.values)
-            if (x != e && _style.layout.isEnabled(x))
+            if (x != e && _es.layout.isEnabled(x))
               if (_rectOf(x) case final r?) r
         ];
     if (d.pointerCount >= 2) {
@@ -774,7 +856,9 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     if (!continuous) _checkpoint();
     setState(() {
       _segments = e.segments;
-      _style = _style.copyWith(segmentScales: e.remapScales(_style.segmentScales));
+      _style = _style.copyWith(
+          segmentScales: e.remapScales(_style.segmentScales),
+          segmentStyles: e.remapMap(_style.segmentStyles));
       if (select) {
         _selectedSegment = e.focus;
       } else if (_selectedSegment != null) {
@@ -790,7 +874,11 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
 
   void _selectSegment(int? i) {
     FocusScope.of(context).unfocus();
-    setState(() => _selectedSegment = i);
+    setState(() {
+      if (i != _selectedSegment) _applyToAll = false;
+      _selectedSegment = i;
+      if (i == null && _tool == _Tool.split) _tool = null;
+    });
     if (i != null && i < _segments.length) {
       final s = _segments[i];
       final t = _time.value;
@@ -982,7 +1070,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
     if (!mounted) return;
     setState(() {
       _segments = [...widget.segments];
-      _style = _style.copyWith(segmentScales: const {});
+      _style = _style.copyWith(segmentScales: const {}, segmentStyles: const {});
       _selectedSegment = null;
       _hasEdits = false;
       _rebuildTimeline();
@@ -1323,7 +1411,21 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
           dim: true,
         ),
         _ToolButton(icon: Icons.swap_horiz_rounded, label: 'تغيير الآية', onTap: () => _changeAyahFlow(sel)),
+        if (s.isAyah)
+          _ToolButton(icon: Icons.call_split_rounded, label: 'تقسيم', onTap: _openSplit),
         _ToolButton(icon: Icons.tune_rounded, label: 'التوقيت', onTap: () => _openTool(_Tool.details)),
+        if (s.isVisible) ...[
+          _ToolButton(icon: _Tool.fonts.icon, label: 'خطها وحجمها', onTap: () => _openTool(_Tool.fonts)),
+          _ToolButton(icon: _Tool.colors.icon, label: 'ألوانها', onTap: () => _openTool(_Tool.colors)),
+          _ToolButton(icon: _Tool.elements.icon, label: 'عناصرها', onTap: () => _openTool(_Tool.elements)),
+          _ToolButton(icon: _Tool.templates.icon, label: 'قالب لها', onTap: () => _openTool(_Tool.templates)),
+          if (_style.segmentStyles.containsKey(sel))
+            _ToolButton(
+                icon: Icons.format_color_reset_rounded,
+                label: 'شكل عام',
+                dim: true,
+                onTap: _resetAyahStyle),
+        ],
         _ToolButton(icon: Icons.play_circle_outline_rounded, label: 'تشغيلها', onTap: () => _playSegment(sel)),
         if (s.needsReview || s.inferred)
           _ToolButton(
@@ -1412,6 +1514,184 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
 
   void _closeTool() => setState(() => _tool = null);
 
+  /// اختيار: التعديل على الآية المحددة بس، أو على كل الآيات (الشكل العام).
+  Widget _scopeBar() {
+    final sel = _selectedSegment!;
+    final s = _segments[sel];
+    final name = s.isAyah
+        ? '${_surahLookup(s.surah ?? 0) ?? 'سورة ${s.surah}'} • ${s.ayah ?? ''}'
+        : 'هالمقطع';
+    final own = _style.segmentStyles.containsKey(sel);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: SegmentedButton<bool>(
+              showSelectedIcon: false,
+              segments: [
+                ButtonSegment(
+                    value: false,
+                    label: Text('هالآية بس ($name)', maxLines: 1, overflow: TextOverflow.ellipsis)),
+                const ButtonSegment(value: true, label: Text('كل الآيات')),
+              ],
+              selected: {_applyToAll},
+              onSelectionChanged: (v) => setState(() => _applyToAll = v.first),
+            ),
+          ),
+          if (own && !_applyToAll)
+            IconButton(
+              tooltip: 'رجّعها للشكل العام',
+              onPressed: _resetAyahStyle,
+              icon: const Icon(Icons.format_color_reset_rounded, color: _gold),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// فتح أداة التقسيم: بنجيب كلمات الآية المحددة.
+  Future<void> _openSplit() async {
+    final sel = _selectedSegment;
+    if (sel == null || sel >= _segments.length) return;
+    final s = _segments[sel];
+    if (!s.isAyah || s.surah == null || s.ayah == null) return;
+    final text = await _text();
+    if (!mounted) return;
+    setState(() {
+      _splitWords = ayahWords(text, s.surah!, s.ayah!);
+      _tool = _Tool.split;
+    });
+  }
+
+  /// تطبيق حدود التقسيم (عدد الكلمات قبل كل حد) على آية المقطع المحدد.
+  Future<void> _applyCuts(List<int> cuts) async {
+    final sel = _selectedSegment;
+    if (sel == null || sel >= _segments.length) return;
+    final text = await _text();
+    if (!mounted || sel >= _segments.length) return;
+    final hadStyle = _groupOf(sel).map((i) => _style.segmentStyles[i]).whereType<OverlayStyle>().firstOrNull;
+    final e = splitAyahAtWords(text, _segments, sel, cuts);
+    _applyEdit(e, saveNow: true);
+    // الشكل الخاص بالآية بيشمل كل أجزائها الجديدة.
+    if (hadStyle != null && _selectedSegment != null) {
+      final styles = {..._style.segmentStyles};
+      for (final i in _groupOf(_selectedSegment!)) {
+        styles[i] = hadStyle;
+      }
+      setState(() => _style = _style.copyWith(segmentStyles: styles));
+      _saveEdits();
+    }
+    HapticFeedback.selectionClick();
+  }
+
+  /// لوحة التقسيم: كلمات الآية، وبينها فواصل بتنكبس لتقسم السطر هون.
+  Widget _splitPanel() {
+    final sel = _selectedSegment;
+    if (sel == null || sel >= _segments.length || !_segments[sel].isAyah) {
+      return const _Note('اختار آية من الخط الزمني أول.');
+    }
+    final words = _splitWords;
+    if (words.isEmpty) return const Center(child: GoldLoader());
+    final cuts = wordCutsAt(_segments, sel).toSet();
+    final parts = cuts.length + 1;
+    // رقم الجزء (من 0) لكل كلمة، عشان نلوّن الأجزاء.
+    int partOf(int w) => cuts.where((c) => c <= w).length;
+    const partColors = [Color(0xFFDDB45C), Color(0xFF52C7B8), Color(0xFFE8A0BF), Color(0xFF9DB7F5)];
+    void toggle(int c) {
+      final next = {...cuts};
+      if (!next.remove(c)) next.add(c);
+      _applyCuts(next.toList()..sort());
+    }
+
+    void every(int n) => _applyCuts([for (var c = n; c < words.length; c += n) c]);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: GoldOutlineButton(
+                label: 'الآية كاملة',
+                icon: Icons.notes_rounded,
+                height: 44,
+                onPressed: cuts.isEmpty ? null : () => _applyCuts(const []),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _gold.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Text(parts == 1 ? 'سطر واحد' : '$parts أسطر',
+                  style: const TextStyle(fontFamily: kUiFont, color: _gold, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        const _Note('اكبس على الفاصل بين كلمتين لتبلّش سطر جديد من هون (وكبسة ثانية بتشيله). '
+            'كل سطر بيصير مقطع لحاله على الخط الزمني، وبتظبط وقته بالمقبضين.'),
+        const SizedBox(height: 6),
+        Wrap(
+          textDirection: TextDirection.rtl,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: 10,
+          children: [
+            for (var w = 0; w < words.length; w++) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: partColors[partOf(w) % partColors.length].withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: partColors[partOf(w) % partColors.length].withValues(alpha: 0.6)),
+                ),
+                child: Text(words[w],
+                    style: const TextStyle(
+                        fontFamily: 'Amiri Quran', fontSize: 19, height: 1.9, color: Colors.white)),
+              ),
+              if (w < words.length - 1)
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => toggle(w + 1),
+                  child: SizedBox(
+                    width: 26,
+                    height: 44,
+                    child: Center(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        width: cuts.contains(w + 1) ? 5 : 2,
+                        height: cuts.contains(w + 1) ? 36 : 20,
+                        decoration: BoxDecoration(
+                          color: cuts.contains(w + 1) ? _gold : Colors.white24,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 14),
+        const Text('تقسيم سريع', style: TextStyle(fontFamily: kUiFont, color: Colors.white70)),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final n in [2, 3, 4, 5, 6])
+              if (n < words.length)
+                ActionChip(label: Text('كل $n كلمات'), onPressed: () => every(n)),
+          ],
+        ),
+      ],
+    );
+  }
+
   /// لوحة الأداة (مكان الخط الزمني) بعنوان وزر ✓.
   Widget _toolPanel(_Tool t) {
     final maxH = MediaQuery.sizeOf(context).height * 0.42;
@@ -1425,6 +1705,8 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
         body = _colorsTab();
       case _Tool.templates:
         body = _templatesTab();
+      case _Tool.split:
+        body = _splitPanel();
       case _Tool.details:
         final sel = _selectedSegment;
         body = sel == null || sel >= _segments.length
@@ -1486,7 +1768,13 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
               ],
             ),
           ),
-          if (!_can && t != _Tool.templates && t != _Tool.details)
+          if (_selectedSegment != null &&
+              _selectedSegment! < _segments.length &&
+              _segments[_selectedSegment!].isVisible &&
+              t != _Tool.details &&
+              t != _Tool.split)
+            _scopeBar(),
+          if (!_can && t != _Tool.templates && t != _Tool.details && t != _Tool.split)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16),
               child: _Note('التخصيص (العناصر والخطوط والألوان) بالخطط المدفوعة. بالمجاني: القوالب الجاهزة.'),
@@ -1505,7 +1793,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   // --------------------------- تبويب العناصر ---------------------------
 
   Widget _elementsTab() {
-    final layout = _style.layout;
+    final layout = _es.layout;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1544,7 +1832,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                     isDense: true,
                     border: OutlineInputBorder(),
                     labelText: 'اسم القارئ (بتكتبه إنت)'),
-                onChanged: (v) => _setStyle(_style.copyWith(reciterName: v)),
+                onChanged: (v) => setState(() => _style = _style.copyWith(reciterName: v)),
               ),
             ),
         ],
@@ -1553,7 +1841,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
             alignment: AlignmentDirectional.centerStart,
             child: TextButton.icon(
               onPressed: _can
-                  ? () => _setStyle(_style.copyWith(
+                  ? () => _setStyle(_es.copyWith(
                       layout: OverlayLayout.of({
                         for (final e in OverlayElement.values)
                           e: layout[e].copyWith(clearAnchor: true),
@@ -1570,7 +1858,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   // ---------------------------- تبويب الخطوط ----------------------------
 
   Widget _fontsTab() {
-    final layout = _style.layout;
+    final layout = _es.layout;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1580,8 +1868,8 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
           segments: [
             for (final f in AyahFont.values) ButtonSegment(value: f, label: Text(f.label)),
           ],
-          selected: {_style.font},
-          onSelectionChanged: _can ? (s) => _setStyle(_style.copyWith(font: s.first)) : null,
+          selected: {_es.font},
+          onSelectionChanged: _can ? (s) => _setStyle(_es.copyWith(font: s.first)) : null,
         ),
         const SizedBox(height: 8),
         const Text('خط التفسير والعناصر النصية'),
@@ -1590,9 +1878,9 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
           segments: [
             for (final f in TafsirFont.values) ButtonSegment(value: f, label: Text(f.label)),
           ],
-          selected: {_style.tafsirFont},
+          selected: {_es.tafsirFont},
           onSelectionChanged:
-              _can ? (s) => _setStyle(_style.copyWith(tafsirFont: s.first)) : null,
+              _can ? (s) => _setStyle(_es.copyWith(tafsirFont: s.first)) : null,
         ),
         const SizedBox(height: 8),
         const Text('عرض التفسير للآية المقسومة'),
@@ -1602,9 +1890,9 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
             ButtonSegment(value: TafsirMode.split, label: Text('مقسوم')),
             ButtonSegment(value: TafsirMode.fullUnderEachPart, label: Text('كامل تحت كل جزء')),
           ],
-          selected: {_style.tafsirMode},
+          selected: {_es.tafsirMode},
           onSelectionChanged:
-              _can ? (s) => _setStyle(_style.copyWith(tafsirMode: s.first)) : null,
+              _can ? (s) => _setStyle(_es.copyWith(tafsirMode: s.first)) : null,
         ),
         const SizedBox(height: 8),
         ValueListenableBuilder<int?>(
@@ -1634,6 +1922,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
         Row(
           children: [
             const Expanded(child: Text('الأحجام')),
+            if (_scopeSeg == null)
             FilterChip(
               avatar: Icon(_perSegment ? Icons.looks_one_outlined : Icons.layers, size: 18),
               label: Text(_perSegment ? 'كل مقطع لحاله' : 'كل المقاطع مع بعض'),
@@ -1649,7 +1938,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
             ),
           ],
         ),
-        if (_perSegment)
+        if (_perSegment && _scopeSeg == null)
           Row(
             children: [
               Expanded(
@@ -1663,14 +1952,16 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                 ),
             ],
           ),
-        _Note(_perSegment
+        _Note(_scopeSeg != null
+            ? 'الحجم هون لهالآية بس. بدك الكل؟ اختار "كل الآيات" فوق.'
+            : _perSegment
             ? 'الحجم هون بيتغيّر للمقطع الظاهر بس (شغّل أو حرّك الفيديو لمقطع ثاني '
                 'لتغيّر حجمه). المقاطع الباقية بتضل بحجمها.'
             : 'الحجم هون بيطبّق على كل المقاطع (كل الآيات، كل التفاسير...) مع بعض.'),
         const _Note('اضغط على عنصر بالفيديو لتحديده، وبعدين اسحب من أي مكان لتحريكه '
             'أو استعمل إصبعين لتكبيره وتصغيره.'),
         for (final e in OverlayElement.values)
-          if (_style.layout.isEnabled(e) && e.available)
+          if (_es.layout.isEnabled(e) && e.available)
             Row(
               children: [
                 SizedBox(width: 92, child: Text(e.label, style: const TextStyle(fontSize: 12))),
@@ -1697,9 +1988,9 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   // ----------------------------- تبويب الألوان -----------------------------
 
   Widget _colorsTab() {
-    final bg = _style.background;
-    final shadowOn = _style.shadowStrength > 0;
-    final opposite = _style.color == OverlayTextColor.white ? 'أسود' : 'أبيض';
+    final bg = _es.background;
+    final shadowOn = _es.shadowStrength > 0;
+    final opposite = _es.color == OverlayTextColor.white ? 'أسود' : 'أبيض';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1716,13 +2007,15 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                 label: Text('نص ${c.label}'),
               ),
           ],
-          selected: {_style.color},
+          selected: {_es.color},
           onSelectionChanged: _can
-              ? (s) => setState(() {
-                    _style = _style.copyWith(color: s.first);
+              ? (s) {
+                  _setStyle(_es.copyWith(color: s.first));
+                  setState(() {
                     _colorTouched = true;
                     _colorNote = null;
-                  })
+                  });
+                }
               : null,
         ),
         if (_colorNote != null) _Note(_colorNote!),
@@ -1733,7 +2026,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
           contentPadding: EdgeInsets.zero,
           value: shadowOn,
           onChanged: _can
-              ? (v) => _setStyle(_style.copyWith(shadowStrength: v ? _lastShadow : 0))
+              ? (v) => _setStyle(_es.copyWith(shadowStrength: v ? _lastShadow : 0))
               : null,
           title: Text('ظل $opposite للنص'),
         ),
@@ -1742,20 +2035,20 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
             const SizedBox(width: 74, child: Text('شدة الظل', style: TextStyle(fontSize: 12))),
             Expanded(
               child: Slider(
-                value: _style.shadowStrength,
+                value: _es.shadowStrength,
                 divisions: 20,
-                label: '${(_style.shadowStrength * 100).round()}٪',
+                label: '${(_es.shadowStrength * 100).round()}٪',
                 onChanged: _can
                     ? (v) {
                         if (v > 0) _lastShadow = v;
-                        _setStyle(_style.copyWith(shadowStrength: v));
+                        _setStyle(_es.copyWith(shadowStrength: v));
                       }
                     : null,
               ),
             ),
             SizedBox(
                 width: 44,
-                child: Text('${(_style.shadowStrength * 100).round()}٪',
+                child: Text('${(_es.shadowStrength * 100).round()}٪',
                     style: const TextStyle(fontSize: 12))),
           ],
         ),
@@ -1771,7 +2064,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
           ],
           selected: {bg.mode},
           onSelectionChanged:
-              _can ? (s) => _setStyle(_style.copyWith(background: bg.copyWith(mode: s.first))) : null,
+              _can ? (s) => _setStyle(_es.copyWith(background: bg.copyWith(mode: s.first))) : null,
         ),
         if (bg.mode != OverlayBackgroundMode.none)
           Row(
@@ -1784,7 +2077,7 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
                   divisions: 18,
                   label: '${(bg.opacity * 100).round()}٪',
                   onChanged: _can
-                      ? (v) => _setStyle(_style.copyWith(background: bg.copyWith(opacity: v)))
+                      ? (v) => _setStyle(_es.copyWith(background: bg.copyWith(opacity: v)))
                       : null,
                 ),
               ),
@@ -1862,11 +2155,17 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   }
 
   void _apply(OverlayTemplate t) {
+    if (_scopeSeg != null) {
+      _setStyle(t.applyTo(_es));
+      setState(() => _selected = null);
+      return;
+    }
+    _checkpoint();
     setState(() {
-      _style = t.applyTo(_style);
+      _style = t.applyTo(_style).copyWith(segmentStyles: _style.segmentStyles);
       // قالب المستخدم بيرجّع لونه؛ والجاهز بيحافظ على اللون الحالي.
       if (!t.builtIn) _colorTouched = true;
-      if (_style.shadowStrength > 0) _lastShadow = _style.shadowStrength;
+      if (_es.shadowStrength > 0) _lastShadow = _es.shadowStrength;
       _colorNote = null;
       _selected = null;
     });
@@ -1903,12 +2202,12 @@ class _OverlayEditorScreenState extends State<OverlayEditorScreen>
   Future<void> _saveCurrent() async {
     final name = await _askName('حفظ كقالب');
     if (name == null || !mounted) return;
-    await _templates.add(name, _style);
+    await _templates.add(name, _es);
     if (mounted) setState(() {});
   }
 
   Future<void> _updateTemplate(OverlayTemplate t) async {
-    await _templates.updateStyle(t.id, _style);
+    await _templates.updateStyle(t.id, _es);
     if (!mounted) return;
     setState(() {});
     ScaffoldMessenger.of(context)

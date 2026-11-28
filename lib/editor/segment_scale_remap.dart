@@ -19,6 +19,18 @@ SegmentScaleMap remapSegmentScales(SegmentScaleMap old, List<int?> mapping) {
   return out;
 }
 
+/// نفس [remapSegmentScales] لأي خريطة مفاتيحها index مقطع (مثلاً
+/// `OverlayStyle.segmentStyles`، الشكل الخاص بكل آية).
+Map<int, T> remapIndexMap<T>(Map<int, T> old, List<int?> mapping) {
+  final out = <int, T>{};
+  old.forEach((oldIndex, v) {
+    if (oldIndex < 0 || oldIndex >= mapping.length) return;
+    final newIndex = mapping[oldIndex];
+    if (newIndex != null) out[newIndex] = v;
+  });
+  return out;
+}
+
 /// حذف المقطع رقم [deletedIndex] من قائمة طولها [oldLength]: كل اللي بعده
 /// بيرجع مرتبة وحدة، وهو نفسه بيصير null (حجمه الخاص بيضيع مع حذفه).
 List<int?> mappingForDelete(int oldLength, int deletedIndex) => [

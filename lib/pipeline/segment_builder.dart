@@ -633,3 +633,83 @@ List<String> pipelineAyahRefs(List<RecitationSegment> segs) {
       if (s.isAyah && seen.add(s.ref!)) s.ref!,
   ];
 }
+
+/// كلمات الآية (مقسومة على المسافات) للتقسيم اليدوي بالمحرر.
+List<String> ayahWords(QuranTextSource text, int surah, int ayah) {
+  final c = text.ayah(surah, ayah);
+  if (c == null) return const [];
+  return [for (final m in RegExp(r'\S+').allMatches(c.uthmani)) m.group(0)!];
+}
+
+/// تلاوة آية **مقسومة يدوياً على حدود كلمات** (طلب أنس 2026-11-28: "تقسم الآية
+/// لسطر فيه كم كلمة"). [cuts] = عدد الكلمات قبل كل حد (بين 1 وعدد الكلمات−1)؛
+/// فاضية = الآية كاملة بجزء واحد. الأوقات: [partTimes] لو بنفس عدد الأجزاء،
+/// وإلا [start]–[end] بتتوزّع بنسبة طول كل جزء. الباقي (القص، الرقم مع آخر جزء،
+/// تقسيم التفسير) بنفس [_buildGroup] تبع خط الأنابيب.
+List<RecitationSegment> buildAyahReadingAtWords(
+  QuranTextSource text,
+  int surah,
+  int ayah,
+  List<int> cuts, {
+  required double start,
+  required double end,
+  List<(double, double)>? partTimes,
+  PipelineOptions options = const PipelineOptions(),
+  double confidence = 1.0,
+}) {
+  final content = text.ayah(surah, ayah);
+  if (content == null) {
+    return buildAyahReading(text, surah, ayah, [(start, end)],
+        options: options, confidence: confidence);
+  }
+  final uthmani = content.uthmani;
+  final words = RegExp(r'\S+').allMatches(uthmani).toList();
+  final norm = ArabicNormalizer.keyWithMap(uthmani);
+  final len = norm.key.length;
+  int keyAt(int pos) {
+    // عدد حروف المفتاح اللي موقعها بالنص قبل [pos].
+    var lo = 0, hi = norm.sourceIndex.length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (norm.sourceIndex[mid] < pos) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  final ks = <int>[];
+  for (final c in ({...cuts}.toList()..sort())) {
+    if (c < 1 || c >= words.length) continue;
+    final k = keyAt(words[c].start);
+    if (k <= 0 || k >= len) continue;
+    if (ks.isNotEmpty && k <= ks.last) continue;
+    ks.add(k);
+  }
+  final bounds = [0, ...ks, len];
+  final p = bounds.length - 1;
+  final e = end < start ? start : end;
+  final List<(double, double)> times;
+  if (partTimes != null && partTimes.length == p) {
+    times = partTimes;
+  } else {
+    final total = e - start;
+    final t = <(double, double)>[];
+    var acc = start;
+    for (var k = 0; k < p; k++) {
+      final frac = len > 0 ? (bounds[k + 1] - bounds[k]) / len : 1 / p;
+      final next = k == p - 1 ? e : acc + total * frac;
+      t.add((acc, next));
+      acc = next;
+    }
+    times = t;
+  }
+  final items = <_AyahItem>[
+    for (var k = 0; k < p; k++)
+      _AyahItem(surah, ayah, bounds[k], bounds[k + 1], times[k].$1, times[k].$2,
+          confidence, false, ''),
+  ];
+  return _buildGroup(text, items, options);
+}
